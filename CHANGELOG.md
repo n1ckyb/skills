@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [1.0.0] - 2026-09-13
 
 ### Security
+- Validated every field parsed out of a GitHub tree URL before it reaches the filesystem or Git. `parseGitHubTreeUrl` previously performed no validation at all, so a crafted source such as `.../tree/main/../../etc` escaped the temporary clone directory during the Git clone fallback (which triggers routinely on API rate limits) and could read arbitrary local files. Owner, repo, ref and folder are now each validated, and the parser returns `null` on any failure.
+- Added `isSafeGitRef`, rejecting option-like refs (`--upload-pack=...`), `..` sequences, `.lock` suffixes and other malformed refs before they are passed as arguments to `git ls-remote`.
+- Enforced containment at both skill-folder read sites: a resolved folder that is not inside its checkout root is rejected, so a caller that forgets to validate cannot turn a traversal sequence into a local file disclosure.
+- Validated owner, repo and slug in `parseSkillsRegistryUrl`.
 - Inverted static-vetting polarity so every line of every file is scanned by default, including unfenced documentation prose. Suppression is now the narrow exception: a finding is dropped only when a negation directly governs that specific match within its own clause, and clause boundaries (sentence end, comma, contrastive conjunction, list/table delimiter) end that protection. This closes an evasion where an unrelated negation word anywhere on the line (for example `never`, `without`, or `detects`) zeroed the risk score and allowed a payload such as a piped remote install to install cleanly.
 - Removed phrasing-based directive detection, which only recognized an allowlist of instruction verbs and missed most realistic attacker phrasings.
 - Suppressed matches no longer mask a live payload later in the same line; all matches of a rule are evaluated.
