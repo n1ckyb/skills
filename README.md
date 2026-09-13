@@ -66,7 +66,9 @@ When a skill is vetted, the card status updates dynamically:
 - Git CLI (`git`) for repository cloning.
 
 ### Clone & Global Installation (PowerShell)
-Clone the repository from GitHub and run the installation script to install the extension and skill into your global profile (`~/.copilot/extensions/skill-explorer` and `~/.agents/skills/skill-explorer`):
+Clone the repository from GitHub and run the installation script to install the `skill-explorer` extension and skill into your global profile (`~/.copilot/extensions/skill-explorer` and `~/.agents/skills/skill-explorer`):
+
+The repository uses a multi-skill layout: each skill lives under `skills/<skill-name>/` and each companion extension under `extensions/<skill-name>/`.
 
 ```powershell
 git clone https://github.com/n1ckyb/skills.git

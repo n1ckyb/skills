@@ -1,6 +1,6 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateFileBounds, calculateContentDigest } from "../extension/lib/vetting.mjs";
+import { validateFileBounds, calculateContentDigest } from "../extensions/skill-explorer/lib/vetting.mjs";
 
 test("calculateContentDigest is deterministic and depends on sorted file paths", () => {
     const map1 = {

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Community-ready standalone Copilot CLI extension and skill for discovering, security-vetting, and installing skills.",
   "type": "module",
-  "main": "extension/extension.mjs",
+  "main": "extensions/skill-explorer/extension.mjs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/n1ckyb/skills.git"
@@ -14,7 +14,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check extension/extension.mjs extension/lib/*.mjs"
+    "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/lib/*.mjs"
   },
   "keywords": [
     "copilot",

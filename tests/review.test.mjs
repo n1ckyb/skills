@@ -1,8 +1,8 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reviewSkill } from "../extension/lib/review.mjs";
-import { vetFilesMap } from "../extension/lib/vetting.mjs";
-import { DEFAULT_CONFIG } from "../extension/lib/config.mjs";
+import { reviewSkill } from "../extensions/skill-explorer/lib/review.mjs";
+import { vetFilesMap } from "../extensions/skill-explorer/lib/vetting.mjs";
+import { DEFAULT_CONFIG } from "../extensions/skill-explorer/lib/config.mjs";
 
 test("reviewSkill generates structured review with sourceRevision, contentDigest, ratings, and verdict", () => {
     const filesMap = {

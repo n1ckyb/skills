@@ -6,7 +6,7 @@ import {
     parseSkillsRegistryUrl,
     getCanonicalSkillSlug,
     validatePathSafety
-} from "../extension/lib/url.mjs";
+} from "../extensions/skill-explorer/lib/url.mjs";
 
 test("parseAndValidateGitHubUrl accepts valid owner/repo and https URLs", () => {
     const r1 = parseAndValidateGitHubUrl("github/awesome-copilot");

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { loadConfig, saveConfig, DEFAULT_CONFIG } from "../extension/lib/config.mjs";
+import { loadConfig, saveConfig, DEFAULT_CONFIG } from "../extensions/skill-explorer/lib/config.mjs";
 
 test("loadConfig returns default config and creates file when missing", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "cfg-test-"));

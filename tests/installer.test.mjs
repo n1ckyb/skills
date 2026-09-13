@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { installSkillAtomic } from "../extension/lib/installer.mjs";
-import { DEFAULT_CONFIG } from "../extension/lib/config.mjs";
-import { calculateContentDigest } from "../extension/lib/vetting.mjs";
+import { installSkillAtomic } from "../extensions/skill-explorer/lib/installer.mjs";
+import { DEFAULT_CONFIG } from "../extensions/skill-explorer/lib/config.mjs";
+import { calculateContentDigest } from "../extensions/skill-explorer/lib/vetting.mjs";
 
 const VALID_SHA = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
 

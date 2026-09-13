@@ -14,8 +14,8 @@ $HomeDir = [Environment]::GetFolderPath('UserProfile')
 $ExtDest = Join-Path $HomeDir ".copilot\extensions\skill-explorer"
 $SkillDest = Join-Path $HomeDir ".agents\skills\skill-explorer"
 
-$SourceExtDir = Join-Path $PackageDir "extension"
-$SourceSkillDir = Join-Path $PackageDir "skill"
+$SourceExtDir = Join-Path $PackageDir "extensions\skill-explorer"
+$SourceSkillDir = Join-Path $PackageDir "skills\skill-explorer"
 
 if (-not (Test-Path (Join-Path $SourceExtDir "extension.mjs"))) {
     throw "Source extension.mjs not found in '$SourceExtDir'"

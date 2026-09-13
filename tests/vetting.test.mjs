@@ -1,7 +1,7 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
-import { vetFilesMap } from "../extension/lib/vetting.mjs";
-import { DEFAULT_CONFIG } from "../extension/lib/config.mjs";
+import { vetFilesMap } from "../extensions/skill-explorer/lib/vetting.mjs";
+import { DEFAULT_CONFIG } from "../extensions/skill-explorer/lib/config.mjs";
 
 test("vetFilesMap flags dangerous execution and credential exfiltration", () => {
     const filesMap = {
