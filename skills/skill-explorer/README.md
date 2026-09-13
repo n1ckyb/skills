@@ -173,6 +173,14 @@ The wrapper is not a bypass. It resolves the exact `skills/<name>/` folder, disp
 
 All interfaces use the same `discover → vet → confirm → install/sync` state machine. Vetting produces a compact receipt (source, revision, digest, and risk summary); full shortlist and finding payloads are not persisted. `install` creates a new installation or reports identical content already present. `sync` re-vets a tracked installation at a newly selected revision and can replace different local content only after explicit confirmation.
 
+Discovery preserves successful catalog results when another source fails and returns
+`degraded`, `attemptedSources`, and structured `sourceErrors` fields. Network access
+uses HTTPS timeouts, response-size and redirect bounds, plus an operation request
+budget. Immutable revision resolutions are cached briefly (pinned revision and digest
+verification are still performed at install time). Compact operation state, including
+vetting receipts and installation decisions, is recorded at
+`~/.copilot/skill-explorer-operation-state.json`.
+
 ---
 
 ## Configuration

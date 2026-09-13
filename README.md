@@ -47,6 +47,11 @@ npm test
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and security-testing guidance. See [`SECURITY.md`](SECURITY.md) to report vulnerabilities privately.
 
+Discovery reports partial results explicitly when a source is unavailable (`degraded`,
+`attemptedSources`, and `sourceErrors`). Network calls use bounded HTTPS requests,
+per-operation budgets, and bounded immutable revision caching; operation receipts are
+recorded in `~/.copilot/skill-explorer-operation-state.json`.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

@@ -1,7 +1,7 @@
 import { readSkillSource } from "./github.mjs";
 import { vetFilesMap } from "./vetting.mjs";
 import { installSkillAtomic } from "./installer.mjs";
-import { loadInstalledRegistry } from "./config.mjs";
+import { loadInstalledRegistry, recordOperationState } from "./config.mjs";
 
 function installationKey(source, scope) {
     return `${scope}:${source}`;
@@ -18,7 +18,7 @@ function confirmationCovers({ confirmationSummary, repoOrUrl, scope, expectedRev
 export async function vetSkillSource(repoOrUrl, config) {
     const source = await readSkillSource(repoOrUrl);
     const vetting = vetFilesMap(source.filesMap, repoOrUrl, config);
-    return {
+    const result = {
         source,
         vetting,
         receipt: {
@@ -29,6 +29,13 @@ export async function vetSkillSource(repoOrUrl, config) {
             status: vetting.status
         }
     };
+    await recordOperationState("vet", {
+        attemptedSources: [repoOrUrl],
+        failures: [],
+        vettingReceipt: result.receipt,
+        installationDecision: vetting.isBlocked ? "blocked" : "pending"
+    }).catch(() => {});
+    return result;
 }
 
 export async function executeInstallation({
@@ -48,10 +55,17 @@ export async function executeInstallation({
     if (userConfirmed !== true || !confirmationCovers({
         confirmationSummary, repoOrUrl, scope, expectedRevision, expectedDigest
     })) {
-        return {
+        const result = {
             status: "CONFIRMATION_REQUIRED",
             reason: "Confirmation must explicitly include the source, scope, expected revision, and expected digest from the vetting receipt."
         };
+        await recordOperationState("install", {
+            attemptedSources: [repoOrUrl],
+            failures: [],
+            vettingReceipt: { expectedRevision, expectedDigest },
+            installationDecision: result.status
+        }).catch(() => {});
+        return result;
     }
 
     if (action === "install" && replaceExisting) {
@@ -64,7 +78,7 @@ export async function executeInstallation({
         }
     }
 
-    return installSkillAtomic({
+    const result = await installSkillAtomic({
         repoOrUrl,
         scope,
         userConfirmed,
@@ -75,4 +89,11 @@ export async function executeInstallation({
         allowReplace: action === "sync" && replaceExisting,
         action
     });
+    await recordOperationState("install", {
+        attemptedSources: [repoOrUrl],
+        failures: [],
+        vettingReceipt: { expectedRevision, expectedDigest },
+        installationDecision: result.status
+    }).catch(() => {});
+    return result;
 }
