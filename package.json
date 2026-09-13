@@ -14,7 +14,9 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/lib/*.mjs"
+    "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/lib/*.mjs",
+    "skill:validate": "node scripts/validate-skill.mjs",
+    "plugin:validate": "node scripts/validate-plugin.mjs"
   },
   "keywords": [
     "copilot",

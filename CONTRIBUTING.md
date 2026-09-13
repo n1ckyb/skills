@@ -34,3 +34,5 @@ This repository follows the official Awesome GitHub Copilot contribution model:
 - Do not add `canvas.json`; plugin manifests provide extension website metadata.
 - Validate plugin manifests with the upstream repository's
   `npm run plugin:validate` when contributing this package there.
+- Run the local equivalents before submitting changes:
+  `npm run skill:validate` and `npm run plugin:validate`.

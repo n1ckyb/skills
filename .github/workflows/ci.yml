@@ -26,5 +26,11 @@ jobs:
       - name: Run Syntax Check
         run: npm run check
 
+      - name: Validate Skill
+        run: npm run skill:validate
+
+      - name: Validate Plugin
+        run: npm run plugin:validate
+
       - name: Run Tests
         run: npm test
