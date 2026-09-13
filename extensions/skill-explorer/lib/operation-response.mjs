@@ -1,5 +1,18 @@
 ﻿import { createBoundedDiagnostics } from "./diagnostics.mjs";
 
+/**
+ * Skill Explorer Operation Response Contract & Schema Migration Engine
+ *
+ * Responsibilities:
+ * - Constructing standardized, predictable JSON response envelopes for all public skill explorer operations
+ *   (search, trending, vet, install, sync, configure).
+ * - Enforcing envelope schema compliance (required fields, type checks, semver versioning).
+ * - Exposing backward-compatible legacy fields throughout the v1.x support lifecycle.
+ * - Providing deprecation guidance and mapping for downstream consumers migrating to modern fields.
+ * - Supporting strict modern envelope generation (compatibilityMode: false) for v2.0-ready clients.
+ * - Providing standardized error envelope generation (operationFailure) for all exception pathways.
+ */
+
 export const SCHEMA_VERSION = "1.0.0";
 export const TARGET_SCHEMA_VERSION = "2.0.0";
 

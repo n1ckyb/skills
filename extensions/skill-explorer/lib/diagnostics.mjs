@@ -1,4 +1,15 @@
-﻿export const MODEL_DIAGNOSTIC_LIMITS = Object.freeze({
+﻿/**
+ * Skill Explorer Diagnostics & Local Observability Engine
+ *
+ * Responsibilities:
+ * - Aggregating local reliability telemetry from operation state records (~/.copilot/skill-explorer-operation-state.jsonl).
+ * - Multi-dimensional record filtering across configurable time windows (1h, 24h, 7d, all) and origins (production, development, test, all).
+ * - Origin-aware breakdown and safe handling of legacy untagged records (defaulting to production).
+ * - Threshold evaluation for alert warnings: budget exhaustion, source failure rates, Git fallback frequency, and state compaction drops.
+ * - Generating bounded diagnostic summaries for tool response envelopes and CLI inspection.
+ */
+
+export const MODEL_DIAGNOSTIC_LIMITS = Object.freeze({
     sourceErrors: 20,
     attemptedSources: 50
 });
@@ -12,6 +23,81 @@ export const DEFAULT_DIAGNOSTIC_THRESHOLDS = Object.freeze({
 
 export const DIAGNOSTIC_WINDOWS = Object.freeze(["1h", "24h", "7d", "all"]);
 export const DEFAULT_DIAGNOSTIC_WINDOW = "all";
+
+export const KNOWN_ORIGINS = Object.freeze(["production", "development", "test", "all"]);
+export const DEFAULT_ORIGIN_FILTER = "all";
+
+/**
+ * Normalizes an origin filter string to a canonical origin name.
+ *
+ * @param {string} [origin]
+ * @returns {string}
+ */
+export function normalizeOriginFilter(origin) {
+    if (!origin || origin === "all" || origin === "*" || origin === "any") {
+        return "all";
+    }
+    const lower = String(origin).trim().toLowerCase();
+    if (lower === "prod" || lower === "production") return "production";
+    if (lower === "dev" || lower === "development") return "development";
+    if (lower === "test" || lower === "testing") return "test";
+    return lower;
+}
+
+/**
+ * Filters operation state records by origin/environment marker and calculates breakdown counts.
+ *
+ * @param {Array<object>} [records=[]]
+ * @param {string} [originFilter="all"]
+ * @param {object} [options={}]
+ * @returns {{ filteredRecords: Array<object>, origin: string, recordsByOrigin: { production: number, development: number, test: number, other: number } }}
+ */
+export function filterRecordsByOrigin(records = [], originFilter = DEFAULT_ORIGIN_FILTER, options = {}) {
+    const normalized = normalizeOriginFilter(originFilter);
+    const defaultOriginForLegacy = options.defaultOrigin || "production";
+
+    const recordsByOrigin = {
+        production: 0,
+        development: 0,
+        test: 0,
+        other: 0
+    };
+
+    for (const record of records) {
+        const recordOrigin = (record.origin || record.environment || defaultOriginForLegacy).toLowerCase();
+        if (recordOrigin === "production" || recordOrigin === "prod") {
+            recordsByOrigin.production++;
+        } else if (recordOrigin === "development" || recordOrigin === "dev") {
+            recordsByOrigin.development++;
+        } else if (recordOrigin === "test" || recordOrigin === "testing") {
+            recordsByOrigin.test++;
+        } else {
+            recordsByOrigin.other++;
+        }
+    }
+
+    if (normalized === "all") {
+        return {
+            filteredRecords: [...records],
+            origin: "all",
+            recordsByOrigin
+        };
+    }
+
+    const filteredRecords = records.filter(record => {
+        const recordOrigin = (record.origin || record.environment || defaultOriginForLegacy).toLowerCase();
+        if (normalized === "production" && (recordOrigin === "production" || recordOrigin === "prod")) return true;
+        if (normalized === "development" && (recordOrigin === "development" || recordOrigin === "dev")) return true;
+        if (normalized === "test" && (recordOrigin === "test" || recordOrigin === "testing")) return true;
+        return recordOrigin === normalized;
+    });
+
+    return {
+        filteredRecords,
+        origin: normalized,
+        recordsByOrigin
+    };
+}
 
 export function parseDiagnosticWindow(windowSpec) {
     if (!windowSpec || windowSpec === "all" || windowSpec === "alltime") {
@@ -127,8 +213,11 @@ export function createBoundedDiagnostics({ sourceErrors = [], attemptedSources =
 }
 
 export function createOperationDiagnosticReport(records = [], options = {}) {
+    const originOption = options.origin || DEFAULT_ORIGIN_FILTER;
+    const { filteredRecords: originFilteredRecords, origin: activeOrigin, recordsByOrigin } = filterRecordsByOrigin(records, originOption, options);
+
     const windowOption = options.window || DEFAULT_DIAGNOSTIC_WINDOW;
-    const { filteredRecords, window: windowMeta } = filterRecordsByWindow(records, windowOption, options);
+    const { filteredRecords, window: windowMeta } = filterRecordsByWindow(originFilteredRecords, windowOption, options);
 
     const sourceAvailability = new Map();
     let totalDurationMs = 0;
@@ -161,10 +250,13 @@ export function createOperationDiagnosticReport(records = [], options = {}) {
     const thresholds = { ...DEFAULT_DIAGNOSTIC_THRESHOLDS, ...(options.thresholds || {}) };
     const warnings = [];
 
-    const windowLabel = windowMeta.name === "all" ? "all retained history" : `window '${windowMeta.name}'`;
+    const originLabel = activeOrigin === "all" ? "" : ` (${activeOrigin} telemetry)`;
+    const scopeLabel = windowMeta.name === "all"
+        ? `all retained history${originLabel}`
+        : `window '${windowMeta.name}'${originLabel}`;
 
     if (budgetExhaustions >= thresholds.budgetExhaustionThreshold) {
-        warnings.push(`Budget exhaustion alert: ${budgetExhaustions} operation(s) exhausted their allocated request budget in ${windowLabel}.`);
+        warnings.push(`Budget exhaustion alert: ${budgetExhaustions} operation(s) exhausted their allocated request budget in ${scopeLabel}.`);
     }
 
     const sources = [...sourceAvailability.values()].map(source => {
@@ -178,22 +270,24 @@ export function createOperationDiagnosticReport(records = [], options = {}) {
 
     for (const src of sources) {
         if (src.failures > 0 && src.failureRate >= thresholds.sourceFailureRateThreshold) {
-            warnings.push(`Source failure rate alert: '${src.source}' has a ${(src.failureRate * 100).toFixed(1)}% failure rate (${src.failures}/${src.attempts}) in ${windowLabel}.`);
+            warnings.push(`Source failure rate alert: '${src.source}' has a ${(src.failureRate * 100).toFixed(1)}% failure rate (${src.failures}/${src.attempts}) in ${scopeLabel}.`);
         }
     }
 
     if (fallbackAttempts >= thresholds.gitFallbackThreshold) {
-        warnings.push(`Git fallback alert: ${fallbackAttempts} operation(s) fell back to Git transport in ${windowLabel}.`);
+        warnings.push(`Git fallback alert: ${fallbackAttempts} operation(s) fell back to Git transport in ${scopeLabel}.`);
     }
 
     if (compactionDrops >= thresholds.compactionDroppedRecordsThreshold) {
-        warnings.push(`State compaction alert: ${compactionDrops} record(s) dropped due to local operation-state retention bounds in ${windowLabel}.`);
+        warnings.push(`State compaction alert: ${compactionDrops} record(s) dropped due to local operation-state retention bounds in ${scopeLabel}.`);
     }
 
     const recordCount = filteredRecords.length;
 
     return {
         recordCount,
+        origin: activeOrigin,
+        recordsByOrigin,
         window: windowMeta,
         duration: {
             totalMs: totalDurationMs,

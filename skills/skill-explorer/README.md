@@ -20,7 +20,8 @@
 - **Interactive Shortlist**: Opens a `skill-shortlist` canvas with source, details, vetting, and install-request controls; “Fetch more skills” appends deduplicated results to the open shortlist; install requests still require review and explicit confirmation.
 - **Open Skills Ecosystem Discovery**: Uses the skills.sh leaderboard and `npx skills find` for broad discovery metadata before independently vetting a candidate.
 - **Standardized Response Envelope**: All public operations return a structured envelope with schema versioning, completion state, bounded diagnostics, and migration metadata.
-- **Time-Windowed Reliability Diagnostics**: Local diagnostic reporting with configurable time windows (`1h`, `24h`, `7d`, `all`) and threshold alerts.
+- **Telemetry Origin & Environment Scoping**: Distinguishes production, development, and test operation records with configurable precedence and safe defaults.
+- **Time-Windowed & Origin-Scoped Reliability Diagnostics**: Local diagnostic reporting with configurable time windows (`1h`, `24h`, `7d`, `all`), origin filters (`production`, `development`, `test`, `all`), cross-matrices, and threshold alerts.
 
 ---
 
@@ -122,25 +123,40 @@ All operation responses use `schemaVersion: "1.0.0"`.
 
 ---
 
-## Local Diagnostics & Window Filtering
+## Telemetry Origin & Environment Resolution
+
+Operation state entries persist explicit `origin` and `environment` markers (`production`, `development`, `test`), ensuring test and development runs do not pollute production reliability metrics:
+
+1. **Explicit Option**: Passed via `options.origin` (e.g. `{ origin: "development" }`).
+2. **Environment Variables**: `SKILL_EXPLORER_ORIGIN` or `SKILL_EXPLORER_ENV`.
+3. **Copilot Environment**: `COPILOT_ENVIRONMENT`.
+4. **Node Environment**: `NODE_ENV` heuristic (`test` -> `test`, `dev`/`development` -> `development`, other -> `production`).
+5. **Safe Default**: `"production"`.
+
+---
+
+## Local Diagnostics, Window & Origin Filtering
 
 Run `npm run diagnostics` to inspect local duration, budget exhaustion, source availability, state compaction, fallback frequency, and automated threshold alerts.
 
 ```powershell
-# Default: all retained local JSONL history
+# Default: all retained local JSONL history, all origins
 npm run diagnostics
 
-# Scope to recent 1 hour
-npm run diagnostics -- --window 1h
+# Scope to production origin only
+npm run diagnostics -- --prod
 
-# Scope to recent 24 hours
-npm run diagnostics -- --window 24h
+# Scope to development origin in the past 24 hours
+npm run diagnostics -- --dev --window 24h
 
 # Matrix view across standard windows
 npm run diagnostics -- --all-windows
+
+# Matrix view across all origins
+npm run diagnostics -- --all-origins
 ```
 
-The report includes window timestamps (`startTime`, `endTime`), total vs. filtered record counts, alert rates per window, and threshold alerts without sending any remote telemetry.
+The report includes window timestamps (`startTime`, `endTime`), total vs. filtered record counts, origin breakdown (`recordsByOrigin`), alert rates, and threshold alerts without sending any remote telemetry.
 
 ---
 
@@ -265,6 +281,7 @@ $$\text{Overall Score} = (\text{Utility} \times 0.30) + (\text{Clarity} \times 0
 3. **Boundary Enforcer**: Rejects binary files, symlinks, submodules, path traversal (`..`), files > 1 MiB, total content > 5 MiB, or total files > 200.
 4. **Collision Protection**: Atomic staging prevents directory corruption. Rejects installation if target exists with a differing digest.
 
-### Static Analysis Limitations
-- **No Runtime Guarantee**: Static analysis cannot detect dynamic network requests, runtime prompt injection in complex contexts, or external dependency changes after installation.
+### Static Analysis Limitations & False Positives
+- **Static Pattern Heuristics**: Static regex scanning inspects file contents without runtime execution. Benign documentation mentioning dangerous APIs (e.g. `child_process` in reference docs) may trigger detection.
+- **No Runtime Guarantee**: Static analysis cannot detect obfuscated dynamic network calls or post-install environmental tampering.
 - **No Claim of Absolute Safety**: Skills are reported as `no suspicious static patterns detected`, never as "proven safe".

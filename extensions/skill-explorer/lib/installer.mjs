@@ -6,6 +6,17 @@ import { readSkillSource } from "./github.mjs";
 import { vetFilesMap, calculateContentDigest, validateFileBounds } from "./vetting.mjs";
 import { saveInstalledRecord } from "./config.mjs";
 
+/**
+ * Skill Explorer Atomic Installer & Transaction Engine
+ *
+ * Responsibilities:
+ * - Performing atomic staging, post-stage digest verification, directory backup, atomic swap, and rollback.
+ * - Enforcing revision pinning (40-char SHA) and content digest matching (sha256:64-hex).
+ * - Enforcing security risk thresholds (blocking suspicious installations).
+ * - Preventing accidental destination overwrites unless explicitly authorized via tracked sync.
+ * - Updating local installation registry with scope-qualified provenance records.
+ */
+
 export async function scanDirectoryFiles(dirPath) {
     const filesMap = {};
     async function scan(currentDir, base = "") {
@@ -178,6 +189,7 @@ export async function installSkillAtomic({
             }
 
             if (targetExists) await fs.rename(targetDir, backupDir);
+
             try {
                 await fs.rename(stagingDir, targetDir);
             } catch (err) {

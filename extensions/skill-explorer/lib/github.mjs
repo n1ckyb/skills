@@ -1,4 +1,12 @@
-﻿import fs from "node:fs/promises";
+﻿/**
+ * Skill Explorer GitHub & Remote Transport Module
+ *
+ * Responsibilities:
+ * - Upstream catalog discovery and searching across canonical, AI hero, and directory registries.
+ * - Secure GitHub Trees API and pinned Git transport cloning with SHA-1 validation.
+ * - Enforcing bounds checks and calculating deterministic SHA-256 content digests for all skill sources.
+ */
+import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";

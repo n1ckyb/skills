@@ -1,7 +1,18 @@
-import { readSkillSource } from "./github.mjs";
+﻿import { readSkillSource } from "./github.mjs";
 import { vetFilesMap } from "./vetting.mjs";
 import { installSkillAtomic } from "./installer.mjs";
 import { loadInstalledRegistry, recordOperationState } from "./config.mjs";
+
+/**
+ * Skill Explorer Installation & Vetting Flow Orchestration Module
+ *
+ * Responsibilities:
+ * - Orchestrating end-to-end skill vetting workflow from repository/folder fetch to risk assessment and receipt generation.
+ * - Binding user confirmation explicitly to the vetting receipt (source, scope, expected commit SHA, expected sha256 digest).
+ * - Enforcing installation preconditions (confirmation, tracked sync status, non-destructive install policy).
+ * - Delegating atomic staging, validation, and rollback to the installer module.
+ * - Recording telemetry events for vetting and installation decisions with observability warnings.
+ */
 
 function installationKey(source, scope) {
     return `${scope}:${source}`;
@@ -27,7 +38,8 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
                 installationDecision: "vetting_failed",
                 counters: options.budget?.snapshot?.() || {},
                 durationMs: options.budget?.snapshot?.().elapsedMs || 0,
-                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message)
+                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message),
+                origin: options.origin
             });
         } catch (recordErr) {
             console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
@@ -56,7 +68,8 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
             installationDecision: vetting.isBlocked ? "blocked" : "pending",
             counters: options.budget?.snapshot?.() || {},
             durationMs: options.budget?.snapshot?.().elapsedMs || 0,
-            budgetExhausted: false
+            budgetExhausted: false,
+            origin: options.origin
         });
     } catch (recordErr) {
         const warning = `Failed to persist operation state: ${recordErr.message}`;
@@ -82,6 +95,7 @@ export async function executeInstallation({
     options = {}
 }) {
     const operationOptions = budget ? { ...options, budget } : options;
+    const origin = options.origin;
     if (!["install", "sync"].includes(action)) {
         throw new Error(`Unsupported installation action '${action}'.`);
     }
@@ -100,7 +114,8 @@ export async function executeInstallation({
                 installationDecision: result.status,
                 counters: budget?.snapshot?.() || {},
                 durationMs: budget?.snapshot?.().elapsedMs || 0,
-                budgetExhausted: false
+                budgetExhausted: false,
+                origin
             });
         } catch (recordErr) {
             const warning = `Failed to persist operation state: ${recordErr.message}`;
@@ -143,7 +158,8 @@ export async function executeInstallation({
                 installationDecision: "failed",
                 counters: budget?.snapshot?.() || {},
                 durationMs: budget?.snapshot?.().elapsedMs || 0,
-                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message)
+                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message),
+                origin
             });
         } catch (recordErr) {
             console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
@@ -159,7 +175,8 @@ export async function executeInstallation({
             installationDecision: result.status,
             counters: budget?.snapshot?.() || {},
             durationMs: budget?.snapshot?.().elapsedMs || 0,
-            budgetExhausted: false
+            budgetExhausted: false,
+            origin
         });
     } catch (recordErr) {
         const warning = `Failed to persist operation state: ${recordErr.message}`;

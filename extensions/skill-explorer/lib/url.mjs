@@ -1,5 +1,15 @@
 ﻿import path from "node:path";
 
+/**
+ * Skill Explorer URL Parsing & Path Safety Validation Module
+ *
+ * Responsibilities:
+ * - Parsing and strictly validating GitHub repository URLs, shorthand paths, tree links, and registry URLs.
+ * - Restricting allowed protocols to HTTPS and rejecting file://, http://, and git@ protocols.
+ * - Enforcing input sanitation against shell command injection and control characters.
+ * - Enforcing relative filesystem path safety (rejecting absolute paths, directory traversal "../", and .git paths).
+ */
+
 export function parseAndValidateGitHubUrl(inputUrl) {
     if (typeof inputUrl !== "string") {
         throw new Error("URL or repository input must be a string");

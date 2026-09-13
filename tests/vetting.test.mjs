@@ -1,7 +1,20 @@
 ﻿import { test } from "node:test";
 import assert from "node:assert/strict";
-import { vetFilesMap } from "../extensions/skill-explorer/lib/vetting.mjs";
+import { vetFilesMap, VETTING_RULES } from "../extensions/skill-explorer/lib/vetting.mjs";
 import { DEFAULT_CONFIG } from "../extensions/skill-explorer/lib/config.mjs";
+
+test("VETTING_RULES export provides structured rule definitions and severity classifications", () => {
+    assert.ok(Array.isArray(VETTING_RULES));
+    assert.ok(VETTING_RULES.length >= 7);
+    for (const rule of VETTING_RULES) {
+        assert.ok(rule.id, "Rule must have an id");
+        assert.ok(rule.category, "Rule must have a category");
+        assert.ok(rule.severity, "Rule must have a severity");
+        assert.ok(typeof rule.score === "number", "Rule score must be a number");
+        assert.ok(rule.description, "Rule must have a description");
+        assert.ok(rule.regex instanceof RegExp, "Rule regex must be a RegExp");
+    }
+});
 
 test("vetFilesMap flags dangerous execution and credential exfiltration", () => {
     const filesMap = {

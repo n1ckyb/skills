@@ -2,14 +2,30 @@
 import path from "node:path";
 import os from "node:os";
 
+/**
+ * Skill Explorer Configuration & State Persistence Module
+ *
+ * Responsibilities:
+ * - Local user configuration loading and serialization (~/.copilot/skill-explorer-config.json).
+ * - Tracked installation provenance registry (~/.copilot/skill-explorer-installed.json).
+ * - Concurrently managed, bounded JSONL operation state recording (~/.copilot/skill-explorer-operation-state.jsonl).
+ * - Operation telemetry environment/origin marker resolution ("production", "development", "test").
+ * - Automatic size- and record-bounded operation state compaction with rotation tracking.
+ */
+
 export const CONFIG_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-config.json");
 export const INSTALLED_REGISTRY_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-installed.json");
 export const OPERATION_STATE_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-operation-state.jsonl");
+
+export const DEFAULT_ORIGIN = "production";
+export const KNOWN_ORIGINS = Object.freeze(["production", "development", "test"]);
+
 export const OPERATION_STATE_RETENTION = Object.freeze({
     maxBytes: 256 * 1024,
     maxRecords: 200,
     compactEvery: 25
 });
+
 export const CANONICAL_SKILLS_REPO = "github/awesome-copilot";
 export const CANONICAL_SKILLS_ROOT = "skills";
 export const CANONICAL_SKILLS_SITE = "https://awesome-copilot.github.com/skills/";
@@ -31,6 +47,40 @@ export const DEFAULT_CONFIG = {
     maxRiskThreshold: 50,
     autoVetBeforeInstall: true
 };
+
+/**
+ * Resolves the operational origin/environment marker with safe fallback hierarchy.
+ * Precedence:
+ * 1. Explicit option passed to method.
+ * 2. SKILL_EXPLORER_ORIGIN or SKILL_EXPLORER_ENV environment variable.
+ * 3. COPILOT_ENVIRONMENT environment variable.
+ * 4. NODE_ENV heuristic (test/testing -> test, dev/development -> development, prod/production -> production).
+ * 5. Default origin ("production").
+ *
+ * @param {string} [explicitOrigin]
+ * @returns {string}
+ */
+export function resolveRecordOrigin(explicitOrigin) {
+    if (explicitOrigin && typeof explicitOrigin === "string" && explicitOrigin.trim()) {
+        return explicitOrigin.trim().toLowerCase();
+    }
+    const envOrigin = process.env.SKILL_EXPLORER_ORIGIN || process.env.SKILL_EXPLORER_ENV;
+    if (envOrigin && typeof envOrigin === "string" && envOrigin.trim()) {
+        return envOrigin.trim().toLowerCase();
+    }
+    const copilotEnv = process.env.COPILOT_ENVIRONMENT;
+    if (copilotEnv && typeof copilotEnv === "string" && copilotEnv.trim()) {
+        return copilotEnv.trim().toLowerCase();
+    }
+    const nodeEnv = process.env.NODE_ENV;
+    if (nodeEnv && typeof nodeEnv === "string") {
+        const lower = nodeEnv.trim().toLowerCase();
+        if (lower === "test" || lower === "testing") return "test";
+        if (lower === "dev" || lower === "development") return "development";
+        if (lower === "prod" || lower === "production") return "production";
+    }
+    return DEFAULT_ORIGIN;
+}
 
 export async function loadConfig(targetConfigPath = CONFIG_PATH) {
     try {
@@ -124,8 +174,21 @@ async function compactOperationState(statePath, retention) {
     return { droppedRecordCount };
 }
 
-export async function recordOperationState(operation, state, statePath = OPERATION_STATE_PATH, retention = OPERATION_STATE_RETENTION) {
-    const entry = { operation, ...state, recordedAt: new Date().toISOString() };
+export async function recordOperationState(
+    operation,
+    state,
+    statePath = OPERATION_STATE_PATH,
+    retention = OPERATION_STATE_RETENTION,
+    options = {}
+) {
+    const origin = resolveRecordOrigin(state?.origin || state?.environment || options?.origin || options?.environment);
+    const entry = {
+        operation,
+        ...state,
+        origin,
+        environment: origin,
+        recordedAt: new Date().toISOString()
+    };
     const line = `${JSON.stringify(entry)}\n`;
     return enqueueStateWrite(statePath, async () => {
         try {
