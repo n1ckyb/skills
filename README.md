@@ -11,11 +11,19 @@ skills/
     README.md
 extensions/
   <skill-name>/
+plugins/
+  <plugin-name>/
+    plugin.json
+    README.md
+    assets/
 scripts/
 tests/
 ```
 
 Each skill is independently discoverable under `skills/<skill-name>/SKILL.md`. A skill-specific README belongs beside its `SKILL.md`; runtime integrations belong under the matching `extensions/<skill-name>/` directory.
+
+Plugins are declarative manifests under `plugins/<plugin-name>/`. They reference
+the source skills and extensions rather than copying or materializing them.
 
 ## Available skills
 
@@ -26,6 +34,7 @@ Discover, security-vet, and install Copilot skills and extensions with explicit 
 - Skill instructions: [`skills/skill-explorer/SKILL.md`](skills/skill-explorer/SKILL.md)
 - User guide: [`skills/skill-explorer/README.md`](skills/skill-explorer/README.md)
 - Companion extension: [`extensions/skill-explorer/`](extensions/skill-explorer/)
+- Plugin manifest: [`plugins/skill-explorer/plugin.json`](plugins/skill-explorer/plugin.json)
 
 ## Development
 
