@@ -1,10 +1,7 @@
-﻿---
+---
 name: skill-explorer
-description: Discover, search, security-vet, and install Copilot skills and extensions from trusted or public repositories with risk-blocking controls.
+description: Discover, security-vet, and install GitHub Copilot skills and extensions from public repositories with explicit provenance, integrity, and risk controls. Use when the user asks to find, compare, inspect, vet, or install a skill or extension.
 license: MIT
-metadata:
-  author: Skill Explorer Community
-  version: "1.0.0"
 ---
 
 # Skill Explorer
@@ -13,12 +10,12 @@ metadata:
 
 ## Canonical Source
 
-Always search the following source first and rank matching entries above every other result:
+Search the following source first and rank matching entries above other results:
 
 - Catalog: `https://awesome-copilot.github.com/skills/`
 - Repository: `https://github.com/github/awesome-copilot/tree/main/skills`
 
-Treat `github/awesome-copilot/skills` as Priority 0: the canonical, ultimate trusted source. Trust affects source ranking and provenance only. It never bypasses security vetting: scan every file in the exact canonical skill folder before installation and block installation when the risk threshold is met.
+Treat `github/awesome-copilot/skills` as Priority 0. Source priority affects discovery ranking and provenance only; it never bypasses security vetting. Scan every file in the exact selected skill folder before installation and block installation when the risk threshold is met.
 
 ## Secondary Source
 
@@ -42,6 +39,8 @@ Use [The Agent Skills Directory](https://www.skills.sh/) as Priority 2 in normal
 ## Capability Overview
 
 This skill leverages the `skill-explorer` extension tools:
+
+These tools are provided by the companion `skill-explorer` extension. If the extension is not installed or a tool is unavailable, explain the limitation and do not pretend that a search, vet, or installation operation completed.
 
 1. **Search**: `skill_explorer_search`
    - Search `github/awesome-copilot/skills` first, `mattpocock/skills` second, The Agent Skills Directory third, then official (`github`, `copilot-extensions`, `microsoft`), configured trusted, and community repos.
