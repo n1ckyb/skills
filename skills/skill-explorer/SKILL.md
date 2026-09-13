@@ -81,6 +81,7 @@ When requested to find skills for a domain or tool (e.g. Jira, Docker, Postgres)
 - Present install counts, source repository, repository stars, and the skills.sh link as discovery metadata only.
 - Render the returned `chatUx.items` as interactive `inbox` cards.
 - Open the `skill-shortlist` canvas with `chatUx.shortlistCanvas.input` to show each candidate's `View source`, `Request details`, `Request vetting`, and `Request install` controls.
+- When `Fetch more skills` is used, retain the existing shortlist and append only new candidates to that same canvas; do not replace it or open a second shortlist.
 - Treat `Request install` as an installation request only: vet the exact source, present revision/digest/risk details, and collect explicit confirmation before installation.
 - Prefer Priority 0 canonical matches over all other sources.
 - Prefer Priority 1 AI Hero matches over every source except Priority 0 canonical matches.

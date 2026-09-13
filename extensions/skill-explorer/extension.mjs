@@ -1,6 +1,6 @@
 ﻿import { joinSession } from "@github/copilot-sdk/extension";
 import fs from "node:fs/promises";
-import { createSkillShortlistCanvas, publishAssessment } from "./skill-shortlist-canvas.mjs";
+import { createSkillShortlistCanvas, publishAssessment, publishCandidates } from "./skill-shortlist-canvas.mjs";
 import {
     loadConfig,
     saveConfig,
@@ -128,6 +128,14 @@ session = await joinSession({
                     });
 
                     const results = [...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped];
+                    publishCandidates(q, results.map(result => ({
+                        name: result.name,
+                        source: result.fullName || result.sourceRepository || result.url,
+                        description: result.description,
+                        url: result.url,
+                        trustTier: result.trustTierLabel,
+                        status: "Not vetted"
+                    })));
                     return JSON.stringify({
                         searchQuery: q,
                         canonicalSource: {
