@@ -80,6 +80,8 @@ When requested to find skills for a domain or tool (e.g. Jira, Docker, Postgres)
 - When the user is looking for an existing capability, also use the open agent skills workflow: inspect `https://skills.sh/`, then run `npx skills find [query]` when available.
 - Present install counts, source repository, repository stars, and the skills.sh link as discovery metadata only.
 - Render the returned `chatUx.items` as interactive `inbox` cards.
+- Open the `skill-shortlist` canvas with `chatUx.shortlistCanvas.input` to show each candidate's `View source`, `Request details`, `Request vetting`, and `Request install` controls.
+- Treat `Request install` as an installation request only: vet the exact source, present revision/digest/risk details, and collect explicit confirmation before installation.
 - Prefer Priority 0 canonical matches over all other sources.
 - Prefer Priority 1 AI Hero matches over every source except Priority 0 canonical matches.
 - Prefer Priority 2 Agent Skills Directory matches over all remaining sources, but never treat directory presence as trust or vetting.

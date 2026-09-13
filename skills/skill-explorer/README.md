@@ -17,6 +17,7 @@
 - **Strict Boundary Checks**: Enforces limits on file count (<=200), single file size (<=1 MiB), total size (<=5 MiB), path safety (no `..` or absolute paths), and rejects symlinks, submodules, and binary files.
 - **Atomic Staging Installer**: Installs via temporary staging directories, prevents overwriting existing installs unless digests match (`ALREADY_INSTALLED`), and cleans staging on failure.
 - **Interactive Chat UX**: Renders search and trending results using native `inbox` card widgets with clear trust and status labels.
+- **Interactive Shortlist**: Opens a `skill-shortlist` canvas with source, details, vetting, and install-request controls; install requests still require review and explicit confirmation.
 - **Open Skills Ecosystem Discovery**: Uses the skills.sh leaderboard and `npx skills find` for broad discovery metadata before independently vetting a candidate.
 
 ---
