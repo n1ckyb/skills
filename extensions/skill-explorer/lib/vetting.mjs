@@ -2,9 +2,90 @@
 import path from "node:path";
 import { validatePathSafety } from "./url.mjs";
 
+/**
+ * Skill Explorer Static Analysis & Security Vetting Engine
+ *
+ * Responsibilities:
+ * - Pre-installation static analysis and risk assessment across all skill files.
+ * - Enforcing hard resource bounds (max 200 files, max 1 MiB per file, max 5 MiB total content).
+ * - Rejecting binary/null-byte files and path-traversal directory escapes.
+ * - Computing deterministic sha256 content digests over sorted, null-delimited file maps.
+ * - Evaluating deterministic heuristic rules across code execution, obfuscation, credential exfiltration,
+ *   network access, prompt injection, destructive file ops, and unpinned remote script execution.
+ * - Applying non-linear per-rule saturation scoring to prevent alert fatigue and score distortion.
+ * - Enforcing safety gates: risk threshold blocking, untrusted provenance verification, and zero risk discounts for trusted sources.
+ *
+ * Known Limitations & False-Positive Review:
+ * - Pattern-matching heuristics scan file contents line-by-line; benign markdown documentation that mentions
+ *   dangerous APIs as examples (e.g., in a security guideline or tool description) can trigger rule matches.
+ * - Skills that manage cloud environments and legitimate credential workflows may trigger CREDENTIAL_EXFILTRATION.
+ * - Obfuscation heuristics look for raw base64 buffer decodes and long hex escape chains; legitimate asset bundling
+ *   or font definitions may match OBFUSCATION_PATTERNS.
+ * - Vetting is a first-line static filter and does not execute untrusted code in a runtime sandbox.
+ */
+
 export const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1 MiB
 export const MAX_TOTAL_SIZE = 5 * 1024 * 1024; // 5 MiB
 export const MAX_FILE_COUNT = 200;
+
+export const VETTING_RULES = Object.freeze([
+    Object.freeze({
+        id: "DANGEROUS_EXECUTION",
+        category: "Code Execution",
+        severity: "HIGH",
+        score: 30,
+        regex: /(?:child_process|execSync|spawnSync|exec\s*\(|spawn\(|eval\s*\(|new\s+Function\s*\(|vm\.runInContext|vm\.runInNewContext|vm\.runInThisContext|vm\.compileFunction)/i,
+        description: "Potentially dangerous shell or dynamic code execution detected."
+    }),
+    Object.freeze({
+        id: "OBFUSCATION_PATTERNS",
+        category: "Obfuscation",
+        severity: "HIGH",
+        score: 25,
+        regex: /(?:Buffer\.from\([^)]*['"]base64['"]\)|atob\s*\(|String\.fromCharCode\s*\(\s*\d+(?:\s*,\s*\d+){3,}\)|\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,})/i,
+        description: "Base64, hex, or character code obfuscation pattern detected."
+    }),
+    Object.freeze({
+        id: "CREDENTIAL_EXFILTRATION",
+        category: "Data Security",
+        severity: "CRITICAL",
+        score: 40,
+        regex: /(?:process\.env\.(?:GITHUB_TOKEN|AWS_SECRET|SLACK_TOKEN|API_KEY|PASSWORD|OPENAI_API_KEY|ANTHROPIC_API_KEY)|(?:id_rsa|\.aws\/credentials|\.env|\.ssh\/id_))/i,
+        description: "Accessing sensitive tokens, credentials, or SSH/AWS secret files."
+    }),
+    Object.freeze({
+        id: "NETWORK_EXFILTRATION",
+        category: "Network Access",
+        severity: "MEDIUM",
+        score: 20,
+        regex: /(?:https?:\/\/(?:discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com|api\.telegram\.org|webhook\.site|pipedream\.net|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}))/i,
+        description: "Connection to external webhook endpoint, exfiltration service, or raw IP address."
+    }),
+    Object.freeze({
+        id: "PROMPT_INJECTION",
+        category: "Prompt Security",
+        severity: "HIGH",
+        score: 30,
+        regex: /(?:ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+(?:all\s+)?previous\s+instructions|system\s+prompt\s*:|you\s+are\s+now\s+in\s+unfiltered|you\s+are\s+now\s+in\s+developer\s+mode|jailbreak|override\s+system\s+instructions|bypass\s+(?:all\s+)?safety\s+(?:checks|guardrails|rules)|<!--\s*ignore\s+(?:all\s+)?previous\s+instructions)/i,
+        description: "Potential prompt injection, persona manipulation, or system instruction override attempt."
+    }),
+    Object.freeze({
+        id: "DESTRUCTIVE_FILE_OPS",
+        category: "File Security",
+        severity: "HIGH",
+        score: 35,
+        regex: /(?:fs\.rmSync|fs\.rm\s*\(|rimraf|unlinkSync|del\s+\/f|\/bin\/rm\s+-rf)/i,
+        description: "Destructive file deletion or directory removal operation."
+    }),
+    Object.freeze({
+        id: "DYNAMIC_DEPENDENCY_EXECUTION",
+        category: "Dependency & Remote Execution",
+        severity: "HIGH",
+        score: 30,
+        regex: /(?:curl\s+-[^\n|]*\|\s*(?:ba)?sh|wget\s+-[^\n|]*\|\s*(?:ba)?sh|npm\s+install\s+--global\s+http|pip\s+install\s+http)/i,
+        description: "Unverified remote script execution or unpinned network dependency installation."
+    })
+]);
 
 export function validateFileBounds(filesMap) {
     const filePaths = Object.keys(filesMap);
@@ -76,64 +157,7 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
         }
     }
 
-    const rules = [
-        {
-            id: "DANGEROUS_EXECUTION",
-            category: "Code Execution",
-            severity: "HIGH",
-            score: 30,
-            regex: /(?:child_process|execSync|spawnSync|exec\s*\(|spawn\(|eval\s*\(|new\s+Function\s*\(|vm\.runInContext|vm\.runInNewContext|vm\.runInThisContext|vm\.compileFunction)/i,
-            description: "Potentially dangerous shell or dynamic code execution detected."
-        },
-        {
-            id: "OBFUSCATION_PATTERNS",
-            category: "Obfuscation",
-            severity: "HIGH",
-            score: 25,
-            regex: /(?:Buffer\.from\([^)]*['"]base64['"]\)|atob\s*\(|String\.fromCharCode\s*\(\s*\d+(?:\s*,\s*\d+){3,}\)|\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,})/i,
-            description: "Base64, hex, or character code obfuscation pattern detected."
-        },
-        {
-            id: "CREDENTIAL_EXFILTRATION",
-            category: "Data Security",
-            severity: "CRITICAL",
-            score: 40,
-            regex: /(?:process\.env\.(?:GITHUB_TOKEN|AWS_SECRET|SLACK_TOKEN|API_KEY|PASSWORD|OPENAI_API_KEY|ANTHROPIC_API_KEY)|(?:id_rsa|\.aws\/credentials|\.env|\.ssh\/id_))/i,
-            description: "Accessing sensitive tokens, credentials, or SSH/AWS secret files."
-        },
-        {
-            id: "NETWORK_EXFILTRATION",
-            category: "Network Access",
-            severity: "MEDIUM",
-            score: 20,
-            regex: /(?:https?:\/\/(?:discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com|api\.telegram\.org|webhook\.site|pipedream\.net|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}))/i,
-            description: "Connection to external webhook endpoint, exfiltration service, or raw IP address."
-        },
-        {
-            id: "PROMPT_INJECTION",
-            category: "Prompt Security",
-            severity: "HIGH",
-            score: 30,
-            regex: /(?:ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+(?:all\s+)?previous\s+instructions|system\s+prompt\s*:|you\s+are\s+now\s+in\s+unfiltered|you\s+are\s+now\s+in\s+developer\s+mode|jailbreak|override\s+system\s+instructions|bypass\s+(?:all\s+)?safety\s+(?:checks|guardrails|rules)|<!--\s*ignore\s+(?:all\s+)?previous\s+instructions)/i,
-            description: "Potential prompt injection, persona manipulation, or system instruction override attempt."
-        },
-        {
-            id: "DESTRUCTIVE_FILE_OPS",
-            category: "File Security",
-            severity: "HIGH",
-            score: 35,
-            regex: /(?:fs\.rmSync|fs\.rm\s*\(|rimraf|unlinkSync|del\s+\/f|\/bin\/rm\s+-rf)/i,
-            description: "Destructive file deletion or directory removal operation."
-        },
-        {
-            id: "DYNAMIC_DEPENDENCY_EXECUTION",
-            category: "Dependency & Remote Execution",
-            severity: "HIGH",
-            score: 30,
-            regex: /(?:curl\s+-[^\n|]*\|\s*(?:ba)?sh|wget\s+-[^\n|]*\|\s*(?:ba)?sh|npm\s+install\s+--global\s+http|pip\s+install\s+http)/i,
-            description: "Unverified remote script execution or unpinned network dependency installation."
-        }
-    ];
+    const rules = VETTING_RULES;
 
     // Rule contribution tracking for deduplication & non-linear saturation
     const ruleTotalAdded = new Map();

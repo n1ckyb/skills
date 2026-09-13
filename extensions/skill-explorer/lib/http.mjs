@@ -1,4 +1,14 @@
-import https from "node:https";
+﻿import https from "node:https";
+
+/**
+ * Skill Explorer HTTP Transport & Request Budget Management Module
+ *
+ * Responsibilities:
+ * - Bounded, non-blocking HTTPS client with redirect limits, response size limits, and timeout controls.
+ * - Enforcing global per-operation request budgets and overall operation execution deadlines.
+ * - Collecting transport-level counters (httpRequests, gitCommands, childProcesses, filesystemOperations).
+ * - Safe response stream destruction on size limit overflows or timeouts to prevent socket leaks.
+ */
 
 export const DEFAULT_HTTP_OPTIONS = Object.freeze({
     timeoutMs: 10_000,

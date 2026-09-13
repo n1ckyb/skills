@@ -2,14 +2,19 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
     createOperationDiagnosticReport,
     filterRecordsByWindow,
+    filterRecordsByOrigin,
+    normalizeOriginFilter,
     parseDiagnosticWindow,
     DIAGNOSTIC_WINDOWS,
     DEFAULT_DIAGNOSTIC_WINDOW,
+    KNOWN_ORIGINS,
+    DEFAULT_ORIGIN_FILTER,
     DEFAULT_DIAGNOSTIC_THRESHOLDS
 } from "../extensions/skill-explorer/lib/diagnostics.mjs";
 import {
@@ -28,6 +33,12 @@ import {
     DEPRECATION_GUIDANCE,
     SCHEMA_MIGRATION_POLICY
 } from "../extensions/skill-explorer/lib/operation-response.mjs";
+import {
+    resolveRecordOrigin,
+    recordOperationState,
+    loadOperationState,
+    DEFAULT_ORIGIN
+} from "../extensions/skill-explorer/lib/config.mjs";
 
 const execFileAsync = promisify(execFile);
 const operations = SUPPORTED_OPERATIONS;
@@ -228,6 +239,142 @@ test("deprecation guidance provides migration mappings for legacy fields", () =>
     }
 });
 
+test("resolveRecordOrigin supports explicit option, environment variables, NODE_ENV, and safe default", () => {
+    const originalEnv = { ...process.env };
+
+    try {
+        delete process.env.SKILL_EXPLORER_ORIGIN;
+        delete process.env.SKILL_EXPLORER_ENV;
+        delete process.env.COPILOT_ENVIRONMENT;
+        delete process.env.NODE_ENV;
+
+        // 1. Safe default
+        assert.equal(resolveRecordOrigin(), "production");
+
+        // 2. Explicit argument
+        assert.equal(resolveRecordOrigin("development"), "development");
+        assert.equal(resolveRecordOrigin("test"), "test");
+        assert.equal(resolveRecordOrigin("custom-staging"), "custom-staging");
+
+        // 3. SKILL_EXPLORER_ORIGIN
+        process.env.SKILL_EXPLORER_ORIGIN = "development";
+        assert.equal(resolveRecordOrigin(), "development");
+        delete process.env.SKILL_EXPLORER_ORIGIN;
+
+        // 4. SKILL_EXPLORER_ENV
+        process.env.SKILL_EXPLORER_ENV = "staging";
+        assert.equal(resolveRecordOrigin(), "staging");
+        delete process.env.SKILL_EXPLORER_ENV;
+
+        // 5. COPILOT_ENVIRONMENT
+        process.env.COPILOT_ENVIRONMENT = "test";
+        assert.equal(resolveRecordOrigin(), "test");
+        delete process.env.COPILOT_ENVIRONMENT;
+
+        // 6. NODE_ENV heuristics
+        process.env.NODE_ENV = "test";
+        assert.equal(resolveRecordOrigin(), "test");
+        process.env.NODE_ENV = "development";
+        assert.equal(resolveRecordOrigin(), "development");
+        process.env.NODE_ENV = "production";
+        assert.equal(resolveRecordOrigin(), "production");
+    } finally {
+        process.env = originalEnv;
+    }
+});
+
+test("recordOperationState embeds origin and environment markers in JSONL records", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "state-origin-"));
+    const statePath = path.join(tempDir, "operation-state.jsonl");
+
+    try {
+        await recordOperationState("search", { query: "docker" }, statePath, undefined, { origin: "production" });
+        await recordOperationState("vet", { repo: "owner/repo" }, statePath, undefined, { origin: "test" });
+        await recordOperationState("install", { scope: "user" }, statePath, undefined, { origin: "development" });
+
+        const records = await loadOperationState(statePath);
+        assert.equal(records.length, 3);
+        assert.equal(records[0].origin, "production");
+        assert.equal(records[0].environment, "production");
+        assert.equal(records[1].origin, "test");
+        assert.equal(records[1].environment, "test");
+        assert.equal(records[2].origin, "development");
+        assert.equal(records[2].environment, "development");
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test("filterRecordsByOrigin filters records and calculates breakdown by origin", () => {
+    const records = [
+        { operation: "search", origin: "production" },
+        { operation: "vet", origin: "production" },
+        { operation: "install", origin: "development" },
+        { operation: "sync", origin: "test" },
+        { operation: "configure" } // legacy untagged record, should map to default (production)
+    ];
+
+    // All origins
+    const all = filterRecordsByOrigin(records, "all");
+    assert.equal(all.filteredRecords.length, 5);
+    assert.equal(all.origin, "all");
+    assert.deepEqual(all.recordsByOrigin, {
+        production: 3,
+        development: 1,
+        test: 1,
+        other: 0
+    });
+
+    // Production only
+    const prod = filterRecordsByOrigin(records, "production");
+    assert.equal(prod.filteredRecords.length, 3);
+    assert.equal(prod.origin, "production");
+
+    // Development only
+    const dev = filterRecordsByOrigin(records, "development");
+    assert.equal(dev.filteredRecords.length, 1);
+    assert.equal(dev.filteredRecords[0].operation, "install");
+
+    // Test only
+    const testRes = filterRecordsByOrigin(records, "test");
+    assert.equal(testRes.filteredRecords.length, 1);
+    assert.equal(testRes.filteredRecords[0].operation, "sync");
+});
+
+test("diagnostic report supports origin and window filtering simultaneously", () => {
+    const baseTime = new Date("2026-09-13T16:00:00.000Z");
+    const records = [
+        // Within 1h: 1 prod search, 1 test search
+        { operation: "search", origin: "production", recordedAt: "2026-09-13T15:45:00.000Z", durationMs: 10, attemptedSources: ["prod-src"], sourceErrors: [] },
+        { operation: "search", origin: "test", recordedAt: "2026-09-13T15:50:00.000Z", durationMs: 5, attemptedSources: ["test-src"], sourceErrors: [] },
+        // 5 hours ago (in 24h, outside 1h): 1 prod failure, 1 test failure
+        { operation: "vet", origin: "production", recordedAt: "2026-09-13T11:00:00.000Z", durationMs: 20, budgetExhausted: true, attemptedSources: ["prod-fail"], sourceErrors: [{ source: "prod-fail", error: "500" }] },
+        { operation: "vet", origin: "test", recordedAt: "2026-09-13T11:00:00.000Z", durationMs: 15, attemptedSources: ["test-src"], sourceErrors: [] }
+    ];
+
+    // Report for 1h window + production origin
+    const report1hProd = createOperationDiagnosticReport(records, { origin: "production", window: "1h", now: baseTime });
+    assert.equal(report1hProd.origin, "production");
+    assert.equal(report1hProd.recordCount, 1);
+    assert.equal(report1hProd.budget.exhaustedOperations, 0);
+    assert.equal(report1hProd.healthy, true);
+
+    // Report for 24h window + production origin (captures prod failure)
+    const report24hProd = createOperationDiagnosticReport(records, { origin: "production", window: "24h", now: baseTime });
+    assert.equal(report24hProd.origin, "production");
+    assert.equal(report24hProd.recordCount, 2);
+    assert.equal(report24hProd.budget.exhaustedOperations, 1);
+    assert.equal(report24hProd.healthy, false);
+    assert.ok(report24hProd.warnings[0].includes("production telemetry"));
+
+    // Report for 24h window + test origin (test did not exhaust budget)
+    const report24hTest = createOperationDiagnosticReport(records, { origin: "test", window: "24h", now: baseTime });
+    assert.equal(report24hTest.origin, "test");
+    assert.equal(report24hTest.recordCount, 2);
+    assert.equal(report24hTest.budget.exhaustedOperations, 0);
+    assert.equal(report24hTest.healthy, true);
+});
+
 test("parseDiagnosticWindow supports standard durations, shorthand aliases, and custom windows", () => {
     assert.deepEqual(parseDiagnosticWindow("all"), { name: "all", durationMs: null });
     assert.deepEqual(parseDiagnosticWindow("1h"), { name: "1h", durationMs: 3600000 });
@@ -330,7 +477,7 @@ test("operation diagnostic report summarizes local reliability signals and trigg
     assert.ok(report.warnings.some(w => w.includes("State compaction alert")));
 });
 
-test("diagnostics CLI script supports --window, --hour, --day, --all, --all-windows, and --help", async () => {
+test("diagnostics CLI script supports --window, --hour, --day, --all, --all-windows, --origin, --prod, --dev, --test, --all-origins, and --help", async () => {
     const scriptPath = path.join(process.cwd(), "scripts", "skill-explorer-diagnostics.mjs");
 
     // 1. --help
@@ -339,19 +486,39 @@ test("diagnostics CLI script supports --window, --hour, --day, --all, --all-wind
     assert.ok(helpOut.includes("--window"));
     assert.ok(helpOut.includes("--hour"));
     assert.ok(helpOut.includes("--day"));
+    assert.ok(helpOut.includes("--origin"));
+    assert.ok(helpOut.includes("--prod"));
+    assert.ok(helpOut.includes("--dev"));
+    assert.ok(helpOut.includes("--test"));
+    assert.ok(helpOut.includes("--all-origins"));
 
-    // 2. Default execution (all-history)
+    // 2. Default execution (all-history, all-origins)
     const { stdout: defaultOut } = await execFileAsync(process.execPath, [scriptPath]);
     const parsedDefault = JSON.parse(defaultOut);
     assert.equal(parsedDefault.window.name, "all");
+    assert.equal(parsedDefault.origin, "all");
     assert.equal(typeof parsedDefault.recordCount, "number");
+    assert.equal(typeof parsedDefault.recordsByOrigin, "object");
 
-    // 3. --window 1h
-    const { stdout: hourOut } = await execFileAsync(process.execPath, [scriptPath, "--window", "1h"]);
-    const parsedHour = JSON.parse(hourOut);
-    assert.equal(parsedHour.window.name, "1h");
+    // 3. --prod (shorthand)
+    const { stdout: prodOut } = await execFileAsync(process.execPath, [scriptPath, "--prod"]);
+    const parsedProd = JSON.parse(prodOut);
+    assert.equal(parsedProd.origin, "production");
 
-    // 4. --all-windows
+    // 4. --origin test
+    const { stdout: testOut } = await execFileAsync(process.execPath, [scriptPath, "--origin", "test"]);
+    const parsedTest = JSON.parse(testOut);
+    assert.equal(parsedTest.origin, "test");
+
+    // 5. --all-origins matrix
+    const { stdout: matrixOriginsOut } = await execFileAsync(process.execPath, [scriptPath, "--all-origins"]);
+    const parsedOriginsMatrix = JSON.parse(matrixOriginsOut);
+    assert.ok(parsedOriginsMatrix["production"]);
+    assert.ok(parsedOriginsMatrix["development"]);
+    assert.ok(parsedOriginsMatrix["test"]);
+    assert.ok(parsedOriginsMatrix["all"]);
+
+    // 6. --all-windows matrix
     const { stdout: matrixOut } = await execFileAsync(process.execPath, [scriptPath, "--all-windows"]);
     const parsedMatrix = JSON.parse(matrixOut);
     assert.ok(parsedMatrix["1h"]);

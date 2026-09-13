@@ -11,6 +11,7 @@ skills/
     README.md
 extensions/
   <skill-name>/
+    lib/
 plugins/
   <plugin-name>/
     plugin.json
@@ -69,14 +70,26 @@ standardized envelope (`schemaVersion: "1.0.0"`) with `operation`, `schemaVersio
 - **Migration Policy**: Legacy top-level fields (`searchQuery`, `totalCount`, `canonicalSource`, `secondarySource`, `directorySource`, `priorityOrdering`, `source`, `period`, `rankingNote`, `findingsCount`, `recommendation`) are scheduled for removal in `2.0.0`. Their replacement targets are documented in `deprecationGuidance` and `operationReceipt.migrationPolicy`.
 - **Compatibility Mode**: Handlers support `compatibilityMode: false` for strict modern envelope consumers, omitting legacy fields while retaining standard envelope fields and receipts.
 
-### Local Diagnostics & Time-Window Filtering
+### Telemetry Origin Markers & Environment Resolution
+
+Operation state entries persist explicit `origin` and `environment` markers (`production`, `development`, `test`), ensuring test and development telemetry do not pollute production reliability metrics:
+
+1. Explicit operation option (`options.origin`).
+2. `SKILL_EXPLORER_ORIGIN` or `SKILL_EXPLORER_ENV` environment variable.
+3. `COPILOT_ENVIRONMENT` environment variable.
+4. `NODE_ENV` heuristic mapping (`test` -> `test`, `dev`/`development` -> `development`, other -> `production`).
+5. Safe fallback default: `"production"`.
+
+### Local Diagnostics, Origin Filtering & Time Windows
 
 Run `npm run diagnostics` to summarize local operation durations, exhausted budgets,
 source availability, state compaction, fallback frequency, and automated threshold alerts (for rising
 budget exhaustion, high source failure rates, Git fallback usage, or state compaction drops).
 
-- **Default**: Evaluates all retained local JSONL history.
-- **Time Windows**: Use `--window <1h|24h|7d|all>` (or shorthand flags `--hour`, `--day`, `--all`, or matrix view `--all-windows`) to scope alert rates, timestamps, and counts to recent operational windows.
+- **Default**: Evaluates all retained local JSONL history across all origins.
+- **Time Windows**: Use `--window <1h|24h|7d|all>` (or shorthand flags `--hour`, `--day`, `--all`, or matrix view `--all-windows`) to scope alert rates and counts to recent operational windows.
+- **Origin Scoping**: Use `--origin <production|development|test|all>` (or shorthand flags `--prod`, `--dev`, `--test`, `--all-origins`) to filter operational metrics by origin/environment.
+- **Cross-Matrix**: Combine `--all-windows` with `--origin` or `--all-origins` with `--window` to produce multi-dimensional diagnostic reports.
 - The diagnostic command reads local JSONL state only and sends no remote telemetry.
 
 ## License

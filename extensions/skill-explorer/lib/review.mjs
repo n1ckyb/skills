@@ -1,6 +1,16 @@
 ﻿import { parseSkillMetadata } from "./vetting.mjs";
 import { AI_HERO_SKILLS_REPO } from "./config.mjs";
 
+/**
+ * Skill Explorer Review & Card Synthesis Engine
+ *
+ * Responsibilities:
+ * - Converting raw skill search candidates into structured chatUx cards (toSkillCard) with clear trust tiers.
+ * - Generating structured human-readable assessment reviews (reviewSkill) combining static vetting results,
+ *   capability discovery, utility/clarity/safety/provenance weighted scoring, and verdicts.
+ * - Explicitly noting review methodology and limitations (static-only analysis, runtime evasion).
+ */
+
 export function toSkillCard(result) {
     const sourceStatus = result.priorityTier === 0
         ? "Canonical"
