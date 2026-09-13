@@ -62,6 +62,25 @@ function assertContract(response, operation) {
     assert.equal(typeof response.diagnosticCounts.omittedSourceErrors, "number");
 }
 
+const APPROVED_RESPONSE_FACTORIES = ["createOperationResponse", "operationFailure"];
+
+function assertHandlerReturnsOperationResponse(toolSource, operation) {
+    const returnStatements = [...toolSource.matchAll(/return\s+JSON\.stringify\(\s*/g)];
+    assert.ok(returnStatements.length > 0, `Public operation '${operation}' has no JSON response return.`);
+    for (const statement of returnStatements) {
+        const payload = toolSource.slice(statement.index + statement[0].length);
+        const factory = /^([A-Za-z_$][\w$]*)\s*\(/.exec(payload);
+        assert.ok(
+            factory,
+            `Public operation '${operation}' returns an ad hoc JSON payload instead of ${APPROVED_RESPONSE_FACTORIES.join(" or ")}.`
+        );
+        assert.ok(
+            APPROVED_RESPONSE_FACTORIES.includes(factory[1]),
+            `Public operation '${operation}' returns '${factory[1]}' instead of ${APPROVED_RESPONSE_FACTORIES.join(" or ")}.`
+        );
+    }
+}
+
 test("static contract: every registered public handler returns an operation response", async () => {
     const extensionSource = await fs.readFile(
         path.join(process.cwd(), "extensions", "skill-explorer", "extension.mjs"),
@@ -84,15 +103,7 @@ test("static contract: every registered public handler returns an operation resp
         const toolSource = extensionSource.slice(start, end);
         assert.match(toolSource, /handler:\s*async\s*\(/, `Public operation '${operation}' must have an async handler.`);
 
-        const responseReturns = [...toolSource.matchAll(/return\s+JSON\.stringify\(\s*([^(\s]+)\s*\(/g)]
-            .map(match => match[1]);
-        assert.ok(responseReturns.length > 0, `Public operation '${operation}' has no JSON response return.`);
-        for (const factory of responseReturns) {
-            assert.ok(
-                factory === "createOperationResponse" || factory === "operationFailure",
-                `Public operation '${operation}' returns '${factory}' instead of createOperationResponse or operationFailure.`
-            );
-        }
+        assertHandlerReturnsOperationResponse(toolSource, operation);
     }
 });
 
@@ -577,4 +588,67 @@ test("diagnostics CLI script supports --window, --hour, --day, --all, --all-wind
     assert.ok(parsedMatrix["1h"]);
     assert.ok(parsedMatrix["24h"]);
     assert.ok(parsedMatrix["all"]);
+});
+
+test("static contract check rejects ad hoc JSON.stringify returns", () => {
+    const assertHandlerSource = (toolSource) => assertHandlerReturnsOperationResponse(toolSource, "example");
+
+    assert.throws(
+        () => assertHandlerSource('return JSON.stringify(createOperationResponse({ operation: "vet" }));\nreturn JSON.stringify({ error: message });'),
+        /ad hoc JSON payload/,
+        "An object-literal return must fail even when a valid factory return exists in the same handler."
+    );
+
+    assert.throws(
+        () => assertHandlerSource('return JSON.stringify(operationFailure("vet", err));\nreturn JSON.stringify(response);'),
+        /ad hoc JSON payload/,
+        "A bare identifier return must fail even when a valid factory return exists in the same handler."
+    );
+
+    assert.throws(
+        () => assertHandlerSource("return JSON.stringify(buildLegacyPayload(result));"),
+        /returns 'buildLegacyPayload'/
+    );
+
+    assert.throws(
+        () => assertHandlerSource("const value = 1;"),
+        /no JSON response return/
+    );
+
+    assert.doesNotThrow(
+        () => assertHandlerSource('return JSON.stringify(createOperationResponse({ operation: "vet" }));\nreturn JSON.stringify(operationFailure("vet", err));')
+    );
+});
+
+test("vet handler forwards the observability warning and vetting receipt to the response envelope", async () => {
+    const extensionSource = await fs.readFile(
+        path.join(process.cwd(), "extensions", "skill-explorer", "extension.mjs"),
+        "utf8"
+    );
+    const start = extensionSource.indexOf('name: "skill_explorer_vet"');
+    assert.ok(start > -1, "vet tool must be registered");
+    const end = extensionSource.indexOf('name: "skill_explorer_install"', start);
+    const vetSource = extensionSource.slice(start, end === -1 ? extensionSource.length : end);
+
+    assert.match(
+        vetSource,
+        /vetted\.observabilityWarning/,
+        "The vet handler must forward vetted.observabilityWarning so origin-classification issues reach callers."
+    );
+    assert.match(
+        vetSource,
+        /vettingReceipt:\s*vetted\.receipt/,
+        "The vet handler must forward the vetting receipt recorded with the operation state."
+    );
+
+    const warning = "Operation origin defaulted to production because no origin environment is configured.";
+    const response = createOperationResponse({
+        operation: "vet",
+        result: { riskScore: 0, observabilityWarning: warning },
+        attemptedSources: ["owner/repo"]
+    });
+    assert.ok(
+        response.warnings.includes(warning),
+        "createOperationResponse must surface a forwarded observabilityWarning in warnings."
+    );
 });

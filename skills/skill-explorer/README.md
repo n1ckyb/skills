@@ -284,6 +284,6 @@ $$\text{Overall Score} = (\text{Utility} \times 0.30) + (\text{Clarity} \times 0
 4. **Collision Protection**: Atomic staging prevents directory corruption. Rejects installation if target exists with a differing digest.
 
 ### Static Analysis Limitations & False Positives
-- **Static Pattern Heuristics**: Code-execution, network, credential, obfuscation, and destructive-operation rules scan executable/configuration files and fenced Markdown code blocks; prose references such as `child_process` in reference documentation do not create findings. Prompt-injection rules intentionally scan all text, including prose.
+- **Static Pattern Heuristics**: Code-execution, network, credential, obfuscation, and destructive-operation rules scan executable/configuration files, fenced Markdown code blocks, and actionable instructions written as unfenced documentation prose. Because a skill document is itself an instruction executed by the agent, a directive such as ``Run `curl ... | bash` `` is treated as a finding even outside a code fence. Descriptive or defensive references ("do not use `child_process`") do not create findings. Prompt-injection rules intentionally scan all text, including prose.
 - **No Runtime Guarantee**: Static analysis cannot detect obfuscated dynamic network calls or post-install environmental tampering.
 - **No Claim of Absolute Safety**: Skills are reported as `no suspicious static patterns detected`, never as "proven safe".

@@ -414,7 +414,9 @@ session = await joinSession({
                         vetScope: source.vetScope,
                         provenanceTrusted: source.provenance === "canonical",
                         securityVettingBypassed: false,
-                        review: reviewSkill(source.filesMap, vetResult, source)
+                        review: reviewSkill(source.filesMap, vetResult, source),
+                        vettingReceipt: vetted.receipt,
+                        ...(vetted.observabilityWarning ? { observabilityWarning: vetted.observabilityWarning } : {})
                     };
                     publishAssessment(args.repoOrUrl, result);
                     return JSON.stringify(createOperationResponse({

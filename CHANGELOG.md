@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0] - 2026-09-13
 
+### Security
+- Closed a vetting evasion path where actionable instructions written as unfenced documentation prose (for example, telling the agent to pipe a remote script into a shell, or to delete credential files) scored zero and installed cleanly. Code-execution, credential, network, and destructive-operation rules now scan actionable prose in skill documents and in files without a recognized extension, while descriptive and defensive references remain suppressed.
+- Hardened the static response-contract check so ad hoc `JSON.stringify` returns (object literals and bare identifiers) can no longer be masked by a valid factory return elsewhere in the same handler.
+
+### Fixed
+- `skill_explorer_vet` now forwards the origin-classification `observabilityWarning` and the vetting receipt into its response envelope instead of silently dropping them.
+
 ### Added
 - Standardized `createOperationResponse` contract and validation across all public operations (`search`, `trending`, `vet`, `install`, `sync`, `configure`).
 - Static analysis and contract test suite enforcing shared response envelope and preventing ad hoc responses.

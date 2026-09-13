@@ -16,8 +16,9 @@ import { validatePathSafety } from "./url.mjs";
  * - Enforcing safety gates: risk threshold blocking, untrusted provenance verification, and zero risk discounts for trusted sources.
  *
  * Known Limitations & False-Positive Review:
- * - Code-execution heuristics scan executable/configuration files and fenced Markdown code blocks. They do not
- *   treat prose references to dangerous APIs as findings, while prompt-injection rules intentionally scan all text.
+ * - Code-execution heuristics scan executable/configuration files, fenced Markdown code blocks, and actionable
+ *   instructions written as ordinary documentation prose. Descriptive or defensive references to dangerous APIs
+ *   ("do not use ...") are not treated as findings, while prompt-injection rules intentionally scan all text.
  * - Skills that manage cloud environments and legitimate credential workflows may trigger CREDENTIAL_EXFILTRATION.
  * - Obfuscation heuristics look for raw base64 buffer decodes and long hex escape chains; legitimate asset bundling
  *   or font definitions may match OBFUSCATION_PATTERNS.
@@ -90,10 +91,27 @@ export const VETTING_RULES = Object.freeze([
 const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|txt)$/i;
 const EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|cs|php|sh|bash|zsh|ps1|ya?ml|json)$/i;
 
-function appliesToLine(rule, filePath, inCodeFence) {
+// A skill document is itself an instruction executed by the agent, so an actionable directive written as
+// ordinary prose is as dangerous as a fenced code block. These patterns separate actionable instructions
+// from descriptive or defensive mentions of the same APIs.
+const PROSE_NEGATION_PATTERN = /\b(?:do(?:es)?\s+not|don't|doesn't|never|avoid(?:s|ed)?|must\s+not|should\s+not|shouldn't|cannot|can't|without|instead\s+of|rather\s+than|no\s+longer|block(?:s|ed|ing)?|prevent(?:s|ed|ing)?|reject(?:s|ed|ing)?|refuse(?:s|d)?|disallow(?:s|ed)?|forbid(?:s|den)?|detect(?:s|ed|ing)?|flag(?:s|ged|ging)?|warn(?:s|ed|ing)?)\b/i;
+const PROSE_DIRECTIVE_PATTERN = /(?:^|[.,;:!?]\s+|^\s*(?:[-*+]|\d+[.)])\s+|\b(?:then|next|first|finally|now|please|to|and)\s+)(?:you\s+(?:should|must|can|may|need\s+to)\s+|(?:the\s+)?agent\s+(?:should|must|will|needs\s+to)\s+)?(?:run|execute|invoke|launch|call|pipe|source|eval|paste|type|copy)\b/i;
+const WHOLE_LINE_CODE_SPAN_PATTERN = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?`[^`]+`\s*[.;:!]?\s*$/;
+
+function isProseFile(filePath) {
+    return DOCUMENTATION_FILE_PATTERN.test(filePath)
+        || !EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN.test(filePath);
+}
+
+export function isActionableProse(line) {
+    if (PROSE_NEGATION_PATTERN.test(line)) return false;
+    return PROSE_DIRECTIVE_PATTERN.test(line) || WHOLE_LINE_CODE_SPAN_PATTERN.test(line);
+}
+
+function appliesToLine(rule, filePath, inCodeFence, line) {
     if (rule.id === "PROMPT_INJECTION") return true;
-    return EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN.test(filePath)
-        || (DOCUMENTATION_FILE_PATTERN.test(filePath) && inCodeFence);
+    if (!isProseFile(filePath)) return true;
+    return inCodeFence || isActionableProse(line);
 }
 
 export function validateFileBounds(filesMap) {
@@ -178,13 +196,13 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
         let inCodeFence = false;
 
         lines.forEach((line, idx) => {
-            if (DOCUMENTATION_FILE_PATTERN.test(filePath) && /^\s*```/.test(line)) {
+            if (isProseFile(filePath) && /^\s*```/.test(line)) {
                 inCodeFence = !inCodeFence;
                 return;
             }
             const snippet = line.trim().substring(0, 120);
             for (const rule of rules) {
-                if (appliesToLine(rule, filePath, inCodeFence) && rule.regex.test(line)) {
+                if (appliesToLine(rule, filePath, inCodeFence, line) && rule.regex.test(line)) {
                     findings.push({
                         ruleId: rule.id,
                         category: rule.category,
