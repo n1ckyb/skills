@@ -26,15 +26,18 @@ Always search AI Hero's skills immediately after the canonical source and before
 
 Treat `mattpocock/skills` as Priority 1. Vet the exact selected skill folder before installation; source priority never bypasses or discounts security findings.
 
-## Agent Skills Directory
+## Open Agent Skills Discovery
 
-Use [The Agent Skills Directory](https://www.skills.sh/) as Priority 2 in normal searches:
+Use the open agent skills ecosystem as the first broad discovery source after the canonical and AI Hero catalogs:
 
-- Search its public all-time, hot, and 24-hour indexes after Awesome GitHub Copilot and AI Hero.
+- Check the [skills.sh leaderboard](https://skills.sh/) for popular matching skills.
+- If the CLI is available, search with `npx skills find [query]` or `npx skills find [query] --owner <owner>`.
+- Use the result's source, skill name, install count, repository stars, and skills.sh URL as discovery metadata.
 - Deduplicate entries already discovered from Priority 0 or Priority 1.
-- Directory listing, install count, audit badge, or trend rank is discovery metadata, not security approval.
+- Leaderboard position, install count, audit badge, and search ranking are discovery metadata, not security approval.
 - Resolve and vet the exact upstream skill folder before installation.
-- Do not request or store Vercel OIDC credentials for the authenticated directory API.
+- Do not request or store registry or Vercel OIDC credentials.
+- Never use `npx skills add` as the installation step. It bypasses this skill's revision, digest, risk-threshold, and confirmation controls.
 
 ## Capability Overview
 
@@ -43,7 +46,7 @@ This skill leverages the `skill-explorer` extension tools:
 These tools are provided by the companion `skill-explorer` extension. If the extension is not installed or a tool is unavailable, explain the limitation and do not pretend that a search, vet, or installation operation completed.
 
 1. **Search**: `skill_explorer_search`
-   - Search `github/awesome-copilot/skills` first, `mattpocock/skills` second, The Agent Skills Directory third, then official (`github`, `copilot-extensions`, `microsoft`), configured trusted, and community repos.
+   - Search `github/awesome-copilot/skills` first, `mattpocock/skills` second, then the open agent skills ecosystem (`skills.sh` and `npx skills find`), followed by official (`github`, `copilot-extensions`, `microsoft`), configured trusted, and community repos.
 2. **Vet**: `skill_explorer_vet`
    - Run static analysis and produce a structured review covering purpose, benefits, trust-requiring capabilities, suspicious indicators, limitations, verdict, ratings, `sourceRevision` (40-char SHA), and `contentDigest` (`sha256`).
 3. **Install**: `skill_explorer_install`
@@ -74,11 +77,14 @@ When requested to find skills for a domain or tool (e.g. Jira, Docker, Postgres)
 - Call `discover_widgets` if the `inbox` schema has not been loaded in the current session.
 - Render an `inbox` loading state before searching.
 - Call `skill_explorer_search(query="...", source="all")`.
+- When the user is looking for an existing capability, also use the open agent skills workflow: inspect `https://skills.sh/`, then run `npx skills find [query]` when available.
+- Present install counts, source repository, repository stars, and the skills.sh link as discovery metadata only.
 - Render the returned `chatUx.items` as interactive `inbox` cards.
 - Prefer Priority 0 canonical matches over all other sources.
 - Prefer Priority 1 AI Hero matches over every source except Priority 0 canonical matches.
 - Prefer Priority 2 Agent Skills Directory matches over all remaining sources, but never treat directory presence as trust or vetting.
 - Ask: `Which skill should I vet?` with visible result names as choices. Include `Cancel` when appropriate.
+- Resolve the selected result to its exact repository and skill directory before vetting; do not install directly from a registry result.
 
 ### Listing Trending Skills
 When asked for trending, popular, hot, or widely installed skills:

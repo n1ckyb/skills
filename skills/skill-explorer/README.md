@@ -17,12 +17,13 @@
 - **Strict Boundary Checks**: Enforces limits on file count (<=200), single file size (<=1 MiB), total size (<=5 MiB), path safety (no `..` or absolute paths), and rejects symlinks, submodules, and binary files.
 - **Atomic Staging Installer**: Installs via temporary staging directories, prevents overwriting existing installs unless digests match (`ALREADY_INSTALLED`), and cleans staging on failure.
 - **Interactive Chat UX**: Renders search and trending results using native `inbox` card widgets with clear trust and status labels.
+- **Open Skills Ecosystem Discovery**: Uses the skills.sh leaderboard and `npx skills find` for broad discovery metadata before independently vetting a candidate.
 
 ---
 
 ## Source Priority Hierarchy
 
-`skill-explorer` categorizes all discovered skills into seven strict priority tiers. Source priority influences discovery ranking and provenance scores; **it never discounts security risk scores or bypasses vetting thresholds**.
+`skill-explorer` categorizes all discovered skills into seven strict priority tiers. Source priority influences discovery ranking and provenance scores; **it never discounts security risk scores or bypasses vetting thresholds**. Skills.sh install counts and leaderboard ranks are discovery metadata, not approval.
 
 | Tier | Priority Label | Source Description |
 | :--- | :--- | :--- |
@@ -64,6 +65,7 @@ When a skill is vetted, the card status updates dynamically:
 - Node.js 18.0.0 or higher.
 - GitHub Copilot CLI environment.
 - Git CLI (`git`) for repository cloning.
+- Optional `npx skills` CLI for open agent skills discovery.
 
 ### Clone & Global Installation (PowerShell)
 Clone the repository from GitHub and run the installation script to install the `skill-explorer` extension and skill into your global profile (`~/.copilot/extensions/skill-explorer` and `~/.agents/skills/skill-explorer`):
@@ -94,7 +96,7 @@ To also delete your configuration file (`~/.copilot/skill-explorer-config.json`)
 ## Tool Usage Guide
 
 ### 1. `skill_explorer_search`
-Search for skills across canonical catalogs, AI Hero, skills.sh, and GitHub repositories.
+Search for skills across canonical catalogs, AI Hero, the open agent skills ecosystem, and GitHub repositories. For broad capability discovery, also inspect `https://skills.sh/` and run `npx skills find <query>` when available.
 
 ```json
 {
@@ -124,6 +126,8 @@ Perform static security analysis and return structured review, `sourceRevision` 
 
 ### 4. `skill_explorer_install`
 Atomically install a vetted skill after explicit user confirmation.
+
+Do not substitute `npx skills add` for this tool. Direct registry installation bypasses this package's revision pinning, byte digest verification, risk threshold, and confirmation requirements.
 
 ```json
 {
