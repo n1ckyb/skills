@@ -55,9 +55,9 @@ function renderHtml(candidates) {
             <span class="status"><span class="status-dot"></span>${escapeHtml(candidate.status)}</span>
             <div class="actions">
               ${candidate.url ? `<a class="button button-subtle" href="${escapeHtml(candidate.url)}" target="_blank" rel="noreferrer">View source code on GitHub</a>` : ""}
-              <button class="button button-subtle" data-action="details" data-index="${index}">Request details</button>
-              <button class="button button-subtle" data-action="vet" data-index="${index}">Request vetting</button>
-              <button class="button button-primary" data-action="install" data-index="${index}">Request install</button>
+              <button class="button button-subtle" data-action="details" data-index="${index}">Details</button>
+              <button class="button button-subtle" data-action="vet" data-index="${index}">Assess risk</button>
+              <button class="button button-primary" data-action="install" data-index="${index}">Install</button>
             </div>
           </div>
         </article>`).join("");
@@ -126,7 +126,11 @@ export function createSkillShortlistCanvas(session) {
         },
         actions: ["details", "vet", "install"].map(action => ({
             name: `request_${action}`,
-            description: `Request ${action === "vet" ? "security vetting" : action} for a shortlisted skill.`,
+            description: action === "details"
+                ? "Show details for a shortlisted skill."
+                : action === "vet"
+                    ? "Assess security risk for a shortlisted skill."
+                    : "Start the guarded installation flow for a shortlisted skill.",
             inputSchema: {
                 type: "object",
                 properties: { candidate: { type: "object" } },
@@ -157,7 +161,7 @@ async function requestAction(session, action, candidates) {
     const safeCandidates = validateCandidates({ candidates });
     const list = safeCandidates.map(candidate => `- '${candidate.name}' from '${candidate.source}'`).join("\n");
     const prompt = action === "details"
-        ? `Provide source details for these shortlisted skills:\n${list}\nDo not install them.`
+        ? `Explain these shortlisted skills without installing or vetting them:\n${list}\nFor each, describe its purpose, useful scenarios, required trust capabilities, source structure, provenance, limitations, and whether it appears compatible with GitHub Copilot. Do not call skill_explorer_vet or skill_explorer_install.`
         : action === "vet"
             ? `Security-vet these shortlisted skills using skill_explorer_vet:\n${list}\nReport each exact revision, digest, risk score, findings, and verdict. Do not install them.`
             : `The user requested installation of these shortlisted skills:\n${list}\nFirst run skill_explorer_vet for each, show each exact revision, digest, risk result, and scope, then request one explicit confirmation covering only the skills that pass policy before calling skill_explorer_install.`;
