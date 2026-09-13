@@ -128,8 +128,8 @@ export function getCanonicalSkillSlug(repoOrUrl) {
 
 export function validatePathSafety(relPath) {
     if (typeof relPath !== "string") return false;
+    if (path.win32.isAbsolute(relPath) || path.posix.isAbsolute(relPath)) return false;
     const normalized = relPath.replace(/\\/g, "/");
-    if (path.isAbsolute(normalized)) return false;
     if (normalized.startsWith("/") || normalized.startsWith("../") || normalized.includes("/../")) return false;
     if (normalized === ".." || normalized.endsWith("/..")) return false;
     if (normalized === ".git" || normalized.startsWith(".git/") || normalized === ".gitmodules" || normalized.includes("/.git/")) return false;
