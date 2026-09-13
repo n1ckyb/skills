@@ -101,16 +101,38 @@ export function parseAndValidateGitHubUrl(inputUrl) {
     throw new Error("Invalid GitHub repository specification. Expected 'owner/repo' or 'https://github.com/owner/repo'");
 }
 
+const GITHUB_NAME_PATTERN = /^[a-zA-Z0-9_.-]+$/;
+
+/**
+ * Parses a GitHub tree URL into its owner, repo, ref, and folder.
+ *
+ * Every component is validated here rather than at the call site: the folder flows into filesystem
+ * joins during the Git clone fallback, and the ref flows into `git ls-remote` arguments. Returns null
+ * on any unsafe component so callers fall through to their next resolution strategy.
+ */
 export function parseGitHubTreeUrl(repoOrUrl) {
+    if (typeof repoOrUrl !== "string") return null;
     const trimmed = repoOrUrl.trim().replace(/\/+$/, "");
     const match = trimmed.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+)$/i);
     if (!match) return null;
-    return {
-        owner: match[1],
-        repo: match[2],
-        ref: match[3],
-        folder: match[4]
-    };
+    const [, owner, rawRepo, ref, folder] = match;
+    const repo = rawRepo.replace(/\.git$/i, "");
+    if (!GITHUB_NAME_PATTERN.test(owner) || !GITHUB_NAME_PATTERN.test(repo)) return null;
+    if (!isSafeGitRef(ref)) return null;
+    if (!validatePathSafety(folder)) return null;
+    return { owner, repo, ref, folder };
+}
+
+/**
+ * A Git ref must never be mistaken for a command-line option by `git ls-remote`, and must not contain
+ * path traversal or characters that Git itself rejects.
+ */
+export function isSafeGitRef(ref) {
+    if (typeof ref !== "string" || !ref) return false;
+    if (ref.startsWith("-")) return false;
+    if (!/^[a-zA-Z0-9_.\-/]+$/.test(ref)) return false;
+    if (ref.includes("..") || ref.startsWith("/") || ref.endsWith("/") || ref.endsWith(".lock")) return false;
+    return true;
 }
 
 export function parseGitHubFolderSpec(repoOrUrl) {
@@ -127,10 +149,14 @@ export function parseGitHubFolderSpec(repoOrUrl) {
 }
 
 export function parseSkillsRegistryUrl(repoOrUrl) {
+    if (typeof repoOrUrl !== "string") return null;
     const trimmed = repoOrUrl.trim().replace(/\/+$/, "");
     const match = trimmed.match(/^https:\/\/(?:www\.)?skills\.sh\/([^/]+)\/([^/]+)\/([^/]+)$/i);
     if (!match) return null;
-    return { owner: match[1], repo: match[2], slug: match[3] };
+    const [, owner, rawRepo, slug] = match;
+    const repo = rawRepo.replace(/\.git$/i, "");
+    if (![owner, repo, slug].every(part => GITHUB_NAME_PATTERN.test(part))) return null;
+    return { owner, repo, slug };
 }
 
 export function getCanonicalSkillSlug(repoOrUrl) {

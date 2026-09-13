@@ -17,7 +17,8 @@ import {
     parseGitHubFolderSpec,
     parseSkillsRegistryUrl,
     getCanonicalSkillSlug,
-    validatePathSafety
+    validatePathSafety,
+    isSafeGitRef
 } from "./url.mjs";
 import {
     CANONICAL_SKILLS_REPO,
@@ -29,6 +30,26 @@ import {
 } from "./config.mjs";
 import { validateFileBounds, calculateContentDigest } from "./vetting.mjs";
 import { fetchJson, fetchText, createRequestBudget } from "./http.mjs";
+
+/**
+ * Resolves a skill folder inside a checkout and asserts it stays within that checkout.
+ *
+ * Callers already validate folder inputs, but this is the last gate before arbitrary filesystem reads,
+ * so containment is enforced here unconditionally: a future caller that forgets to validate cannot turn
+ * a traversal sequence into a local file disclosure.
+ */
+export function resolveContainedFolder(rootDir, folder) {
+    const normalizedFolder = String(folder ?? "").replace(/^\/+|\/+$/g, "");
+    if (!validatePathSafety(normalizedFolder)) {
+        throw new Error(`Unsafe skill folder path rejected: '${folder}'`);
+    }
+    const rootResolved = path.resolve(rootDir);
+    const folderDir = path.resolve(rootResolved, ...normalizedFolder.split("/"));
+    if (folderDir !== rootResolved && !folderDir.startsWith(rootResolved + path.sep)) {
+        throw new Error(`Skill folder '${folder}' escapes the checkout directory`);
+    }
+    return { normalizedFolder, folderDir };
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +87,12 @@ export async function runGitCommand(args, options = {}) {
 
 export async function resolveCommitSha(owner, repo, ref = "main", options = {}) {
     if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
+    // owner/repo and ref are interpolated into API paths and passed as git arguments below, so both are
+    // validated here rather than relying on any particular caller having done it.
+    const validatedRepo = parseAndValidateGitHubUrl(`${owner}/${repo}`);
+    if (ref !== "HEAD" && !isSafeGitRef(ref)) {
+        throw new Error(`Unsafe Git ref rejected: '${ref}'`);
+    }
     const cacheKey = `${owner}/${repo}@${ref}`;
     const cached = revisionCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.sha;
@@ -94,7 +121,7 @@ export async function resolveCommitSha(owner, repo, ref = "main", options = {}) 
         }
         // Fall back to Git transport when the GitHub API is rate-limited.
     }
-    const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
+    const validated = validatedRepo;
     const refs = ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
     const { stdout } = await runGitCommand(["ls-remote", validated.cloneUrl, ...refs], options);
     const match = stdout.split(/\r?\n/)
@@ -431,8 +458,7 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
             await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha, options);
-            const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
-            const folderDir = path.join(tempDir, ...normalizedFolder.split("/"));
+            const { normalizedFolder, folderDir } = resolveContainedFolder(tempDir, folder);
             const filesMap = {};
             async function readDir(dir, base = "") {
                 const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -552,8 +578,8 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
         }
     }
 
-    async function readSkillFolderFromWorkingTree(rootDir, normalizedFolder, owner, repo, commitSha, provenance) {
-        const folderDir = path.join(rootDir, ...normalizedFolder.split("/"));
+    async function readSkillFolderFromWorkingTree(rootDir, requestedFolder, owner, repo, commitSha, provenance) {
+        const { normalizedFolder, folderDir } = resolveContainedFolder(rootDir, requestedFolder);
         const filesMap = {};
         async function readDir(dir, base = "") {
             const entries = await fs.readdir(dir, { withFileTypes: true });

@@ -6,9 +6,10 @@ import {
     parseGitHubFolderSpec,
     parseSkillsRegistryUrl,
     getCanonicalSkillSlug,
-    validatePathSafety
+    validatePathSafety,
+    isSafeGitRef
 } from "../extensions/skill-explorer/lib/url.mjs";
-import { cloneRepoSecurely } from "../extensions/skill-explorer/lib/github.mjs";
+import { cloneRepoSecurely, resolveContainedFolder, resolveCommitSha, readSkillSource } from "../extensions/skill-explorer/lib/github.mjs";
 
 test("parseAndValidateGitHubUrl accepts valid owner/repo and https URLs", () => {
     const r1 = parseAndValidateGitHubUrl("github/awesome-copilot");
@@ -88,4 +89,72 @@ test("cloneRepoSecurely rejects unpinned Git transport", async () => {
         cloneRepoSecurely("owner/repo", "unused-target", "main"),
         /40-character commit SHA/i
     );
+});
+
+test("parseGitHubTreeUrl rejects traversal, dotgit folders and unsafe refs", () => {
+    const malicious = [
+        "https://github.com/o/r/tree/main/../../etc",
+        "https://github.com/o/r/tree/main/skills/../../../secret",
+        "https://github.com/o/r/tree/main/.git/config",
+        "https://github.com/o/r/tree/--upload-pack=touch/skills/x",
+        "https://github.com/o/r/tree/a..b/skills/x",
+        "https://github.com/o@evil/r/tree/main/skills/x",
+        "https://github.com/o/r r/tree/main/skills/x"
+    ];
+    for (const url of malicious) {
+        assert.equal(parseGitHubTreeUrl(url), null, `expected null for ${url}`);
+    }
+});
+
+test("parseGitHubTreeUrl still parses legitimate tree URLs", () => {
+    assert.deepEqual(parseGitHubTreeUrl("https://github.com/github/awesome-copilot/tree/main/skills/diagnose"), {
+        owner: "github",
+        repo: "awesome-copilot",
+        ref: "main",
+        folder: "skills/diagnose"
+    });
+    const withSlashRef = parseGitHubTreeUrl("https://github.com/o/r.git/tree/release/v1/skills/a");
+    assert.equal(withSlashRef.repo, "r");
+});
+
+test("isSafeGitRef rejects option-like and malformed refs", () => {
+    for (const ref of ["--upload-pack=touch", "-x", "a..b", "/main", "main/", "main.lock", "ma in", "", null]) {
+        assert.equal(isSafeGitRef(ref), false, `expected ${ref} to be unsafe`);
+    }
+    for (const ref of ["main", "release/v1.2.0", "feature_x-1"]) {
+        assert.equal(isSafeGitRef(ref), true, `expected ${ref} to be safe`);
+    }
+});
+
+test("resolveContainedFolder blocks any path escaping the checkout root", () => {
+    const root = process.platform === "win32" ? "C:\\tmp\\root" : "/tmp/root";
+    for (const folder of ["../../etc", "skills/../../x", ".git/config", "..\\..\\x"]) {
+        assert.throws(() => resolveContainedFolder(root, folder), /Unsafe skill folder path|escapes the checkout/);
+    }
+    const ok = resolveContainedFolder(root, "/skills/diagnose/");
+    assert.equal(ok.normalizedFolder, "skills/diagnose");
+    assert.ok(ok.folderDir.endsWith("diagnose"));
+});
+
+test("resolveCommitSha refuses option-like refs before invoking git", async () => {
+    await assert.rejects(
+        () => resolveCommitSha("o", "r", "--upload-pack=touch"),
+        /Unsafe Git ref rejected/
+    );
+});
+
+test("readSkillSource rejects traversal tree URLs at the public entry point", async () => {
+    for (const url of ["https://github.com/o/r/tree/main/../../etc", "https://github.com/o/r/tree/main/.git/config"]) {
+        await assert.rejects(() => readSkillSource(url, null, {}));
+    }
+});
+
+test("parseSkillsRegistryUrl rejects owners, repos and slugs with unsafe characters", () => {
+    for (const url of [
+        "https://skills.sh/o@evil/r/s",
+        "https://skills.sh/o/r/../../etc",
+        "https://skills.sh/o/r%2F../s"
+    ]) {
+        assert.equal(parseSkillsRegistryUrl(url), null, `expected null for ${url}`);
+    }
 });
