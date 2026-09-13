@@ -199,6 +199,22 @@ test("installSkillAtomic performs atomic staging, verification, and collision de
         /already exists with a different content digest/i
     );
 
+    const res3 = await installSkillAtomic({
+        repoOrUrl: "owner/repo",
+        scope: "user",
+        userConfirmed: true,
+        confirmationSummary: "confirm replacement",
+        expectedRevision: VALID_SHA,
+        expectedDigest: differingDigest,
+        config: DEFAULT_CONFIG,
+        targetDirOverride: targetDir,
+        sourceOverride: sourceOverride2,
+        allowReplace: true
+    });
+
+    assert.equal(res3.status, "INSTALLED_SUCCESSFULLY");
+    assert.equal(await fs.readFile(path.join(targetDir, "SKILL.md"), "utf8"), "name: altered-skill\n");
+
     // Clean up
     await fs.rm(tempTestDir, { recursive: true, force: true });
 });

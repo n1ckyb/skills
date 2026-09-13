@@ -347,6 +347,10 @@ session = await joinSession({
                     expectedDigest: {
                         type: "string",
                         description: "The sha256 content digest string returned by skill_explorer_vet."
+                    },
+                    replaceExisting: {
+                        type: "boolean",
+                        description: "Replace an existing different-content installation only after explicit synchronization approval."
                     }
                 },
                 required: ["repoOrUrl", "scope", "userConfirmed", "confirmationSummary", "expectedRevision", "expectedDigest"]
@@ -363,12 +367,63 @@ session = await joinSession({
                         confirmationSummary: args.confirmationSummary,
                         expectedRevision: args.expectedRevision,
                         expectedDigest: args.expectedDigest,
-                        config
+                        config,
+                        allowReplace: args.replaceExisting === true
                     });
                     return JSON.stringify(result, null, 2);
                 } catch (err) {
                     return JSON.stringify({ error: `Installation failed: ${err.message}` });
                 }
+            }
+        },
+        {
+            name: "skill_explorer_sync",
+            description: "Synchronize explicitly selected tracked installations with vetted upstream revisions. Requires explicit approval and replaces different-content destinations only when replaceExisting is true.",
+            parameters: {
+                type: "object",
+                properties: {
+                    skills: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                repoOrUrl: { type: "string" },
+                                scope: { type: "string", enum: ["user", "project"] },
+                                expectedRevision: { type: "string" },
+                                expectedDigest: { type: "string" }
+                            },
+                            required: ["repoOrUrl", "scope", "expectedRevision", "expectedDigest"]
+                        }
+                    },
+                    userConfirmed: { type: "boolean" },
+                    confirmationSummary: { type: "string" },
+                    replaceExisting: { type: "boolean" }
+                },
+                required: ["skills", "userConfirmed", "confirmationSummary", "replaceExisting"]
+            },
+            handler: async (args) => {
+                if (!Array.isArray(args.skills) || args.skills.length === 0) {
+                    return JSON.stringify({ error: "At least one skill is required." });
+                }
+                if (args.userConfirmed !== true || !args.confirmationSummary?.trim()) {
+                    return JSON.stringify({ status: "CONFIRMATION_REQUIRED" });
+                }
+                const config = await loadConfig();
+                const results = [];
+                for (const skill of args.skills) {
+                    try {
+                        results.push(await installSkillAtomic({
+                            ...skill,
+                            userConfirmed: true,
+                            confirmationSummary: args.confirmationSummary,
+                            config,
+                            allowReplace: args.replaceExisting === true
+                        }));
+                    } catch (err) {
+                        results.push({ repoOrUrl: skill.repoOrUrl, error: err.message });
+                    }
+                }
+                return JSON.stringify({ results }, null, 2);
             }
         },
         {
