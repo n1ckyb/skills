@@ -8,15 +8,22 @@ Thank you for your interest in contributing to `skill-explorer`!
 2. **Code Structure**:
    - `extensions/skill-explorer/extension.mjs`: Extension registration, tool handlers, and canvas wiring.
    - `extensions/skill-explorer/skill-shortlist-canvas.mjs`: Interactive shortlist canvas renderer and request actions.
-   - `extensions/skill-explorer/lib/`: Reusable runtime & vetting modules (`url.mjs`, `config.mjs`, `github.mjs`, `vetting.mjs`, `review.mjs`, `installer.mjs`).
+   - `extensions/skill-explorer/lib/`: Reusable runtime & vetting modules (`url.mjs`, `config.mjs`, `github.mjs`, `vetting.mjs`, `review.mjs`, `installer.mjs`, `operation-response.mjs`, `diagnostics.mjs`).
    - `skills/skill-explorer/SKILL.md`: Declarative agent skill instructions.
    - `tests/`: Unit tests using `node:test`.
-3. **Testing**: Run tests before submitting pull requests:
+3. **Response Schema Governance**:
+   - Every public tool and operation must use `createOperationResponse` or `operationFailure`.
+   - Ad hoc response envelopes are strictly rejected by contract tests.
+   - Follow the response schema migration policy documented in `operation-response.mjs`.
+4. **Testing & Diagnostics**: Run all validation steps before submitting changes:
    ```bash
    npm run check
+   npm run skill:validate
+   npm run plugin:validate
    npm test
+   npm run diagnostics
    ```
-4. **Security Focus**: Any change affecting URL parsing, git execution, file bounds, or vetting rules must include corresponding unit tests in `tests/`.
+5. **Security Focus**: Any change affecting URL parsing, git execution, file bounds, or vetting rules must include corresponding unit tests in `tests/`.
 
 ## Plugin and extension conventions
 
