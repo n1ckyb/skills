@@ -176,10 +176,18 @@ All interfaces use the same `discover → vet → confirm → install/sync` stat
 Discovery preserves successful catalog results when another source fails and returns
 `degraded`, `attemptedSources`, and structured `sourceErrors` fields. Network access
 uses HTTPS timeouts, response-size and redirect bounds, plus an operation request
-budget. Immutable revision resolutions are cached briefly (pinned revision and digest
-verification are still performed at install time). Compact operation state, including
-vetting receipts and installation decisions, is recorded at
-`~/.copilot/skill-explorer-operation-state.json` as append-only JSONL. If a receipt
+budget shared with the bounded Git fallback transport. Every Git process is cancelled
+at the operation deadline, consumes budget for each init, remote, fetch, checkout,
+and verification step, and still verifies the pinned SHA after checkout. Immutable
+revision resolutions are cached briefly (pinned revision and digest verification are
+still performed at install time). Compact operation state, including vetting receipts
+and installation decisions, is recorded at
+`~/.copilot/skill-explorer-operation-state.jsonl` as bounded JSONL (200 records or
+256 KiB). Rotation uses a temporary file and rename; a receipt reports the number of
+dropped older records as an `observabilityWarning`. Search and trending preserve sync
+check failures in their source diagnostics and operation receipts. Model-facing
+diagnostics are capped (20 errors and 50 attempted sources) with total and omitted
+counts, while the full diagnostics remain in local operation state. If a receipt
 cannot be persisted, the operation reports an `observabilityWarning` rather than
 silently claiming complete observability.
 

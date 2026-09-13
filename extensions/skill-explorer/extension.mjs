@@ -10,42 +10,20 @@ import {
     AI_HERO_SKILLS_REPO,
     AI_HERO_SKILLS_SITE,
     SKILLS_DIRECTORY_SITE,
-    loadInstalledRegistry
 } from "./lib/config.mjs";
 import {
     searchCanonicalSkills,
     searchAiHeroSkills,
     listTrendingSkills,
     searchSkillsDirectory,
-    fetchJson,
-    readSkillSource
+    fetchJson
 } from "./lib/github.mjs";
 import { reviewSkill, toSkillCard } from "./lib/review.mjs";
 import { executeInstallation, vetSkillSource } from "./lib/installation-flow.mjs";
 import { recordOperationState } from "./lib/config.mjs";
 import { createRequestBudget } from "./lib/github.mjs";
-
-async function filterSynchronizedResults(results, options = {}) {
-    const registry = await loadInstalledRegistry();
-    const visible = [];
-    for (const result of results) {
-        const source = result.fullName || result.sourceRepository || result.url;
-        const installed = registry[`user:${source}`] || registry[`project:${source}`] || registry[source];
-        if (!installed) {
-            visible.push(result);
-            continue;
-        }
-        try {
-            const current = await readSkillSource(source, null, options);
-            if (current.sourceRevision !== installed.sourceRevision || current.contentDigest !== installed.contentDigest) {
-                visible.push({ ...result, syncStatus: "Update available" });
-            }
-        } catch {
-            visible.push({ ...result, syncStatus: "Sync check unavailable" });
-        }
-    }
-    return visible;
-}
+import { filterSynchronizedResults } from "./lib/synchronization.mjs";
+import { createBoundedDiagnostics } from "./lib/diagnostics.mjs";
 
 let session;
 session = await joinSession({
@@ -125,6 +103,7 @@ session = await joinSession({
                     if (rawItems.length === 0) {
                         const fallbackQuery = `${q} (skill OR copilot OR extension)`;
                         const urlFallback = `https://api.github.com/search/repositories?q=${encodeURIComponent(fallbackQuery)}&sort=stars&per_page=15`;
+                        attemptedSources.push("github-search-fallback");
                         try {
                             const dataFallback = await fetchJson(urlFallback, options);
                             rawItems = dataFallback.items || [];
@@ -181,7 +160,13 @@ session = await joinSession({
                         return b.stars - a.stars;
                     });
 
-                    const results = await filterSynchronizedResults([...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped], options);
+                    const synchronized = await filterSynchronizedResults(
+                        [...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped],
+                        options
+                    );
+                    const results = synchronized.results;
+                    sourceErrors.push(...synchronized.sourceErrors);
+                    attemptedSources.push(...synchronized.attemptedSources);
                     publishCandidates(q, results.map(result => ({
                         name: result.name,
                         source: result.fullName || result.sourceRepository || result.url,
@@ -219,8 +204,6 @@ session = await joinSession({
                         ],
                         results,
                         degraded: sourceErrors.length > 0,
-                        sourceErrors,
-                        attemptedSources,
                         chatUx: {
                             widgetType: "inbox",
                             title: `Skills matching "${q}"`,
@@ -243,12 +226,17 @@ session = await joinSession({
                         }
                     };
                     let observabilityWarning;
+                    let operationReceipt;
                     try {
-                        await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length });
+                        const state = await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length });
+                        operationReceipt = { operation: "search", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
+                        if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
+                    Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
+                    if (operationReceipt) response.operationReceipt = operationReceipt;
                     if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(response, null, 2);
                 } catch (err) {
@@ -259,7 +247,8 @@ session = await joinSession({
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
-                    const errResp = { results: [], degraded: true, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], attemptedSources };
+                    const fullErrors = [...sourceErrors, { source: "operation", error: err.message }];
+                    const errResp = { results: [], degraded: true, ...createBoundedDiagnostics({ sourceErrors: fullErrors, attemptedSources }) };
                     if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
                     return JSON.stringify(errResp);
                 }
@@ -293,14 +282,23 @@ session = await joinSession({
                 try {
                     const budget = createRequestBudget();
                 const options = { budget };
-                const results = await filterSynchronizedResults(await listTrendingSkills(period, limit, config, options), options);
+                const synchronized = await filterSynchronizedResults(
+                    await listTrendingSkills(period, limit, config, options),
+                    options
+                );
+                const results = synchronized.results;
+                const sourceErrors = synchronized.sourceErrors;
+                const attemptedSources = [SKILLS_DIRECTORY_SITE, ...synchronized.attemptedSources];
                     let observabilityWarning;
+                    let operationReceipt;
                     try {
-                        await recordOperationState("trending", {
-                            attemptedSources: [SKILLS_DIRECTORY_SITE],
-                            sourceErrors: [],
+                        const state = await recordOperationState("trending", {
+                            attemptedSources,
+                            sourceErrors,
                             resultCount: results.length
                         });
+                        operationReceipt = { operation: "trending", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
+                        if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
@@ -322,11 +320,12 @@ session = await joinSession({
                         ];
                         return card;
                     });
-                    return JSON.stringify({
+                    const response = {
                         source: SKILLS_DIRECTORY_SITE,
                         period,
                         rankingNote: "Trend rank comes from skills.sh. Source priority is displayed separately and does not replace trend rank.",
                         totalCount: results.length,
+                        degraded: sourceErrors.length > 0,
                         results,
                         chatUx: {
                             widgetType: "inbox",
@@ -334,7 +333,11 @@ session = await joinSession({
                             items,
                             nextAction: "Render these cards, then ask which skill to vet. Trending status never bypasses vetting."
                         }
-                    }, null, 2);
+                    };
+                    Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
+                    if (operationReceipt) response.operationReceipt = operationReceipt;
+                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
+                    return JSON.stringify(response, null, 2);
                 } catch (err) {
                     let observabilityWarning;
                     try {

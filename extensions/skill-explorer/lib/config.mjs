@@ -5,6 +5,10 @@ import os from "node:os";
 export const CONFIG_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-config.json");
 export const INSTALLED_REGISTRY_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-installed.json");
 export const OPERATION_STATE_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-operation-state.jsonl");
+export const OPERATION_STATE_RETENTION = Object.freeze({
+    maxBytes: 256 * 1024,
+    maxRecords: 200
+});
 export const CANONICAL_SKILLS_REPO = "github/awesome-copilot";
 export const CANONICAL_SKILLS_ROOT = "skills";
 export const CANONICAL_SKILLS_SITE = "https://awesome-copilot.github.com/skills/";
@@ -82,16 +86,57 @@ export async function saveInstalledRecord(record, registryPath = INSTALLED_REGIS
     await fs.writeFile(registryPath, JSON.stringify(registry, null, 2), "utf8");
 }
 
-export async function recordOperationState(operation, state, statePath = OPERATION_STATE_PATH) {
+const stateWriteQueues = new Map();
+
+function enqueueStateWrite(statePath, operation) {
+    const previous = stateWriteQueues.get(statePath) || Promise.resolve();
+    const next = previous.then(operation, operation);
+    const queued = next.finally(() => {
+        if (stateWriteQueues.get(statePath) === queued) stateWriteQueues.delete(statePath);
+    });
+    stateWriteQueues.set(statePath, queued);
+    return queued;
+}
+
+async function compactOperationState(statePath, retention) {
+    const records = await loadOperationState(statePath);
+    const kept = [];
+    let bytes = 0;
+    for (const record of records.slice(-retention.maxRecords).reverse()) {
+        const recordBytes = Buffer.byteLength(`${JSON.stringify(record)}\n`, "utf8");
+        if (kept.length > 0 && bytes + recordBytes > retention.maxBytes) break;
+        kept.push(record);
+        bytes += recordBytes;
+    }
+    kept.reverse();
+    const droppedRecordCount = records.length - kept.length;
+    if (droppedRecordCount === 0) return { droppedRecordCount: 0 };
+
+    const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+        await fs.writeFile(tempPath, kept.map(record => `${JSON.stringify(record)}\n`).join(""), "utf8");
+        await fs.rename(tempPath, statePath);
+    } finally {
+        await fs.rm(tempPath, { force: true }).catch(() => {});
+    }
+    return { droppedRecordCount };
+}
+
+export async function recordOperationState(operation, state, statePath = OPERATION_STATE_PATH, retention = OPERATION_STATE_RETENTION) {
     const entry = { operation, ...state, recordedAt: new Date().toISOString() };
     const line = `${JSON.stringify(entry)}\n`;
-    try {
-        await fs.mkdir(path.dirname(statePath), { recursive: true });
-        await fs.appendFile(statePath, line, "utf8");
-        return entry;
-    } catch (err) {
-        throw new Error(`Failed to record operation state in '${statePath}': ${err.message}`);
-    }
+    return enqueueStateWrite(statePath, async () => {
+        try {
+            await fs.mkdir(path.dirname(statePath), { recursive: true });
+            await fs.appendFile(statePath, line, "utf8");
+            const { droppedRecordCount } = await compactOperationState(statePath, retention);
+            return droppedRecordCount > 0
+                ? { ...entry, droppedRecordCount, observabilityWarning: `Operation state retention dropped ${droppedRecordCount} older record(s).` }
+                : entry;
+        } catch (err) {
+            throw new Error(`Failed to record operation state in '${statePath}': ${err.message}`);
+        }
+    });
 }
 
 export async function loadOperationState(statePath = OPERATION_STATE_PATH) {
