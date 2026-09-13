@@ -16,9 +16,10 @@ import { validatePathSafety } from "./url.mjs";
  * - Enforcing safety gates: risk threshold blocking, untrusted provenance verification, and zero risk discounts for trusted sources.
  *
  * Known Limitations & False-Positive Review:
- * - Code-execution heuristics scan executable/configuration files, fenced Markdown code blocks, and actionable
- *   instructions written as ordinary documentation prose. Descriptive or defensive references to dangerous APIs
- *   ("do not use ...") are not treated as findings, while prompt-injection rules intentionally scan all text.
+ * - Every line of every file is scanned by default, including unfenced documentation prose, because a skill
+ *   document is itself an instruction executed by the agent. A finding is suppressed only when a negation
+ *   directly governs that specific match within its own clause ("do not use child_process.execSync"), so an
+ *   unrelated negation elsewhere on the line cannot neutralize a payload. Prompt-injection rules are never suppressed.
  * - Skills that manage cloud environments and legitimate credential workflows may trigger CREDENTIAL_EXFILTRATION.
  * - Obfuscation heuristics look for raw base64 buffer decodes and long hex escape chains; legitimate asset bundling
  *   or font definitions may match OBFUSCATION_PATTERNS.
@@ -91,27 +92,91 @@ export const VETTING_RULES = Object.freeze([
 const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|txt)$/i;
 const EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|cs|php|sh|bash|zsh|ps1|ya?ml|json)$/i;
 
-// A skill document is itself an instruction executed by the agent, so an actionable directive written as
-// ordinary prose is as dangerous as a fenced code block. These patterns separate actionable instructions
-// from descriptive or defensive mentions of the same APIs.
-const PROSE_NEGATION_PATTERN = /\b(?:do(?:es)?\s+not|don't|doesn't|never|avoid(?:s|ed)?|must\s+not|should\s+not|shouldn't|cannot|can't|without|instead\s+of|rather\s+than|no\s+longer|block(?:s|ed|ing)?|prevent(?:s|ed|ing)?|reject(?:s|ed|ing)?|refuse(?:s|d)?|disallow(?:s|ed)?|forbid(?:s|den)?|detect(?:s|ed|ing)?|flag(?:s|ged|ging)?|warn(?:s|ed|ing)?)\b/i;
-const PROSE_DIRECTIVE_PATTERN = /(?:^|[.,;:!?]\s+|^\s*(?:[-*+]|\d+[.)])\s+|\b(?:then|next|first|finally|now|please|to|and)\s+)(?:you\s+(?:should|must|can|may|need\s+to)\s+|(?:the\s+)?agent\s+(?:should|must|will|needs\s+to)\s+)?(?:run|execute|invoke|launch|call|pipe|source|eval|paste|type|copy)\b/i;
-const WHOLE_LINE_CODE_SPAN_PATTERN = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?`[^`]+`\s*[.;:!]?\s*$/;
+// A skill document is itself an instruction executed by the agent, so every line of every file is scanned by
+// default. Suppression is the narrow exception, never the rule: a finding is dropped only when a negation
+// directly governs that specific match within its own clause. Scoping suppression to the clause immediately
+// preceding the match (rather than the whole line) prevents an attacker from neutralizing a payload by
+// sprinkling an unrelated negation word elsewhere on the line.
+const CLAUSE_BOUNDARY_PATTERN = /[.;:!?]\s+|,\s+|\b(?:but|however|though|although|yet)\s+|^\s*(?:[-*+]|\d+[.)])\s+|\|\s*/g;
+const NEGATION_CORE = "(?:do(?:es)?\\s+not|don't|doesn't|must\\s+not|should\\s+not|shouldn't|cannot|can't|will\\s+not|won't|is\\s+not|are\\s+not|no\\s+longer|never|instead\\s+of|rather\\s+than|disallow(?:s|ed)?|forbid(?:s|den)?|refuse(?:s|d)?\\s+to)";
+const NEGATED_VERB = "(?:use|run|execute|invoke|call|issue|perform|include|contain|rely\\s+on|depend\\s+on|add|write|ship|allow|permit)[sd]?";
+const NEGATION_OBJECT = "(?:any|the|a|an|this|that|these|those|such|its|your|our|raw|untrusted|dangerous|arbitrary)";
+const GOVERNING_NEGATION_PATTERN = new RegExp(
+    `\\b${NEGATION_CORE}(?:\\s+${NEGATED_VERB})?(?:\\s+${NEGATION_OBJECT})*\\s*$`,
+    "i"
+);
 
 function isProseFile(filePath) {
     return DOCUMENTATION_FILE_PATTERN.test(filePath)
         || !EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN.test(filePath);
 }
 
-export function isActionableProse(line) {
-    if (PROSE_NEGATION_PATTERN.test(line)) return false;
-    return PROSE_DIRECTIVE_PATTERN.test(line) || WHOLE_LINE_CODE_SPAN_PATTERN.test(line);
+function clauseStartIndex(line, matchIndex) {
+    const before = line.slice(0, matchIndex);
+    CLAUSE_BOUNDARY_PATTERN.lastIndex = 0;
+    let clauseStart = 0;
+    let boundary;
+    while ((boundary = CLAUSE_BOUNDARY_PATTERN.exec(before)) !== null) {
+        clauseStart = boundary.index + boundary[0].length;
+        if (CLAUSE_BOUNDARY_PATTERN.lastIndex === boundary.index) CLAUSE_BOUNDARY_PATTERN.lastIndex++;
+    }
+    return clauseStart;
 }
 
-function appliesToLine(rule, filePath, inCodeFence, line) {
-    if (rule.id === "PROMPT_INJECTION") return true;
-    if (!isProseFile(filePath)) return true;
-    return inCodeFence || isActionableProse(line);
+/**
+ * Returns true only when a negation directly governs this match inside its own clause.
+ * Descriptive documentation ("Do not use child_process.execSync") is suppressed; an unrelated
+ * negation elsewhere on the line ("This never fails: run curl ... | bash") is not.
+ */
+export function isGovernedByNegation(line, matchIndex) {
+    const prefix = line.slice(clauseStartIndex(line, matchIndex), matchIndex);
+    if (prefix.length > 60) return false;
+    return GOVERNING_NEGATION_PATTERN.test(prefix.replace(/[`'"(\[]+$/, "").trimEnd());
+}
+
+const GLOBAL_RULE_REGEX = new WeakMap();
+
+function globalRegexFor(rule) {
+    let regex = GLOBAL_RULE_REGEX.get(rule);
+    if (!regex) {
+        regex = new RegExp(rule.regex.source, rule.regex.flags.includes("g") ? rule.regex.flags : `${rule.regex.flags}g`);
+        GLOBAL_RULE_REGEX.set(rule, regex);
+    }
+    return regex;
+}
+
+/**
+ * Returns the first match on the line that is not suppressed. A negation governs its whole clause, so
+ * "do not use child_process.execSync or eval(x)" stays clean, while a clause boundary (sentence end,
+ * comma, contrastive conjunction, or list/table delimiter) ends that protection — preventing a payload
+ * from hiding behind an unrelated negation earlier on the same line.
+ */
+/**
+ * A bare module specifier (`node:child_process`) names a module rather than performing an operation;
+ * any actual use still trips the call-site patterns (`execSync`, `spawn(`, ...). This exemption is
+ * positively identified by the `node:` prefix, so it cannot be induced by attacker phrasing.
+ */
+function isModuleSpecifier(line, matchIndex) {
+    return /node:$/.test(line.slice(0, matchIndex));
+}
+
+function findRuleMatch(rule, filePath, inCodeFence, line) {
+    const suppressible = rule.id !== "PROMPT_INJECTION" && isProseFile(filePath) && !inCodeFence;
+    const regex = globalRegexFor(rule);
+    regex.lastIndex = 0;
+    const governedClauses = new Map();
+    let match;
+    while ((match = regex.exec(line)) !== null) {
+        if (match[0].length === 0) regex.lastIndex++;
+        if (rule.id !== "PROMPT_INJECTION" && isModuleSpecifier(line, match.index)) continue;
+        if (!suppressible) return match;
+        const clauseStart = clauseStartIndex(line, match.index);
+        if (!governedClauses.has(clauseStart)) {
+            governedClauses.set(clauseStart, isGovernedByNegation(line, match.index));
+        }
+        if (!governedClauses.get(clauseStart)) return match;
+    }
+    return undefined;
 }
 
 export function validateFileBounds(filesMap) {
@@ -202,7 +267,7 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
             }
             const snippet = line.trim().substring(0, 120);
             for (const rule of rules) {
-                if (appliesToLine(rule, filePath, inCodeFence, line) && rule.regex.test(line)) {
+                if (findRuleMatch(rule, filePath, inCodeFence, line)) {
                     findings.push({
                         ruleId: rule.id,
                         category: rule.category,
