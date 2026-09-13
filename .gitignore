@@ -1,0 +1,6 @@
+﻿node_modules/
+*.staging-*
+.tmp/
+*.log
+.DS_Store
+*.backup-*
