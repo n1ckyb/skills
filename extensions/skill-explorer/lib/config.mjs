@@ -49,6 +49,69 @@ export const DEFAULT_CONFIG = {
 };
 
 /**
+ * Resolves the effective risk threshold, failing closed on any malformed value.
+ *
+ * The threshold is a security control compared with `riskScore >= threshold`. A non-numeric value
+ * (for example a hand-edited or corrupted config containing `"abc"`) makes that comparison evaluate
+ * to false for every score, silently disabling blocking entirely, so anything unusable falls back to
+ * the default rather than being trusted.
+ *
+ * @param {unknown} value
+ * @returns {number} a threshold in the inclusive range 0-100
+ */
+export function resolveRiskThreshold(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CONFIG.maxRiskThreshold;
+    if (value < 0 || value > 100) return DEFAULT_CONFIG.maxRiskThreshold;
+    return value;
+}
+
+function sanitizeTrustList(value, fallback) {
+    if (!Array.isArray(value)) return [...fallback];
+    const entries = value.filter(entry => typeof entry === "string" && entry.trim()).map(entry => entry.trim().toLowerCase());
+    return [...new Set(entries)];
+}
+
+/**
+ * Normalizes a persisted configuration object so downstream security checks cannot be weakened by
+ * malformed values. Returns the sanitized config plus a list of human-readable warnings describing
+ * every field that had to be replaced.
+ *
+ * @param {unknown} rawConfig
+ * @returns {{ config: object, warnings: string[] }}
+ */
+export function sanitizeConfig(rawConfig) {
+    const warnings = [];
+    const source = rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig) ? rawConfig : {};
+    if (rawConfig !== undefined && source !== rawConfig) {
+        warnings.push("Configuration root was not an object; defaults were applied.");
+    }
+    const config = { ...DEFAULT_CONFIG, ...source };
+
+    const threshold = resolveRiskThreshold(config.maxRiskThreshold);
+    if (threshold !== config.maxRiskThreshold) {
+        warnings.push(`Invalid maxRiskThreshold ${JSON.stringify(config.maxRiskThreshold)}; falling back to ${threshold}.`);
+        config.maxRiskThreshold = threshold;
+    }
+
+    for (const key of ["trustedOrgs", "trustedRepos"]) {
+        // A non-array here is the dangerous case: a bare string turns the `.includes(owner)` trust
+        // check into a substring match, so `evilcorp` would be trusted by an entry of `corp`.
+        const sanitized = sanitizeTrustList(config[key], DEFAULT_CONFIG[key]);
+        if (!Array.isArray(config[key]) || sanitized.length !== config[key].length) {
+            warnings.push(`Invalid ${key} entry in configuration; unusable values were discarded.`);
+        }
+        config[key] = sanitized;
+    }
+
+    if (typeof config.autoVetBeforeInstall !== "boolean") {
+        warnings.push("Invalid autoVetBeforeInstall; falling back to true.");
+        config.autoVetBeforeInstall = DEFAULT_CONFIG.autoVetBeforeInstall;
+    }
+
+    return { config, warnings };
+}
+
+/**
  * Resolves the operational origin/environment marker with safe fallback hierarchy.
  * Precedence:
  * 1. Explicit option passed to method.
@@ -100,12 +163,17 @@ export function resolveRecordOrigin(explicitOrigin) {
 export async function loadConfig(targetConfigPath = CONFIG_PATH) {
     try {
         const data = await fs.readFile(targetConfigPath, "utf8");
+        let parsed;
         try {
-            const parsed = JSON.parse(data);
-            return { ...DEFAULT_CONFIG, ...parsed };
+            parsed = JSON.parse(data);
         } catch (jsonErr) {
             throw new Error(`Malformed configuration JSON in '${targetConfigPath}': ${jsonErr.message}`);
         }
+        const { config, warnings } = sanitizeConfig(parsed);
+        for (const warning of warnings) {
+            console.warn(`[WARNING] Configuration at '${targetConfigPath}': ${warning}`);
+        }
+        return config;
     } catch (err) {
         if (err.code === "ENOENT") {
             try {
@@ -167,6 +235,7 @@ function enqueueStateWrite(statePath, operation) {
 
 async function compactOperationState(statePath, retention) {
     const records = await loadOperationState(statePath);
+    const malformedLineCount = records.malformedLineCount || 0;
     const kept = [];
     let bytes = 0;
     for (const record of records.slice(-retention.maxRecords).reverse()) {
@@ -177,7 +246,9 @@ async function compactOperationState(statePath, retention) {
     }
     kept.reverse();
     const droppedRecordCount = records.length - kept.length;
-    if (droppedRecordCount === 0) return { droppedRecordCount: 0 };
+    // Rewrite when malformed lines were skipped even if no well-formed record was dropped, so the
+    // corrupted content is actually removed from disk instead of being re-skipped on every read.
+    if (droppedRecordCount === 0 && malformedLineCount === 0) return { droppedRecordCount: 0, malformedLineCount: 0 };
 
     const tempPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
     try {
@@ -186,7 +257,7 @@ async function compactOperationState(statePath, retention) {
     } finally {
         await fs.rm(tempPath, { force: true }).catch(() => {});
     }
-    return { droppedRecordCount };
+    return { droppedRecordCount, malformedLineCount };
 }
 
 export async function recordOperationState(
@@ -220,15 +291,17 @@ export async function recordOperationState(
                 || appendCount > retention.maxRecords
                 || stat.size > retention.maxBytes;
             let droppedRecordCount = 0;
+            let malformedLineCount = 0;
             if (shouldCompact) {
-                ({ droppedRecordCount } = await compactOperationState(statePath, retention));
+                ({ droppedRecordCount, malformedLineCount } = await compactOperationState(statePath, retention));
                 stateAppendCounts.set(statePath, 0);
             } else {
                 stateAppendCounts.set(statePath, appendCount);
             }
             const warnings = [
                 ...(originMetadata.warning ? [originMetadata.warning] : []),
-                ...(droppedRecordCount > 0 ? [`Operation state retention dropped ${droppedRecordCount} older record(s).`] : [])
+                ...(droppedRecordCount > 0 ? [`Operation state retention dropped ${droppedRecordCount} older record(s).`] : []),
+                ...(malformedLineCount > 0 ? [`Discarded ${malformedLineCount} malformed operation state line(s).`] : [])
             ];
             return warnings.length > 0
                 ? { ...entry, ...(droppedRecordCount > 0 ? { droppedRecordCount } : {}), observabilityWarning: warnings.join(" ") }
@@ -248,10 +321,23 @@ export async function loadOperationState(statePath = OPERATION_STATE_PATH) {
             const parsed = JSON.parse(trimmed);
             return Array.isArray(parsed) ? parsed : [];
         }
-        return trimmed
-            .split(/\r?\n/)
-            .filter(Boolean)
-            .map(line => JSON.parse(line));
+        // A single truncated line (process killed mid-append, or a concurrent writer in another
+        // process) must not make the whole log permanently unreadable. Malformed lines are dropped
+        // so the next compaction rewrites a clean file.
+        const records = [];
+        let malformedLineCount = 0;
+        for (const line of trimmed.split(/\r?\n/)) {
+            if (!line.trim()) continue;
+            try {
+                records.push(JSON.parse(line));
+            } catch {
+                malformedLineCount++;
+            }
+        }
+        if (malformedLineCount > 0) {
+            Object.defineProperty(records, "malformedLineCount", { value: malformedLineCount, enumerable: false });
+        }
+        return records;
     } catch (err) {
         if (err.code === "ENOENT") return [];
         throw new Error(`Failed to load operation state from '${statePath}': ${err.message}`);

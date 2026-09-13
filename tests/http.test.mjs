@@ -1,8 +1,8 @@
-import { test, mock } from "node:test";
+﻿import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import https from "node:https";
-import { fetchJson, fetchText, createRequestBudget } from "../extensions/skill-explorer/lib/http.mjs";
+import { fetchJson, fetchText, createRequestBudget, isAllowedRedirectHost } from "../extensions/skill-explorer/lib/http.mjs";
 
 function response(statusCode, body, headers = {}) {
     const res = new EventEmitter();
@@ -112,4 +112,72 @@ test("request helper is idempotent and destroys response stream on size overflow
         await assert.rejects(fetchText("https://example.test", { maxBytes: 4 }), /exceeds maximum size/);
         assert.equal(destroyed, true);
     } finally { https.get = original; }
+});
+
+test("request helper rejects redirects to hosts outside the allowlist", async () => {
+    const original = https.get;
+    https.get = (url, options, callback) => {
+        const req = new EventEmitter();
+        queueMicrotask(() => callback(response(302, "", { location: "https://evil.example/payload" })));
+        return req;
+    };
+    try {
+        await assert.rejects(
+            fetchText("https://raw.githubusercontent.com/o/r/main/SKILL.md", { maxRedirects: 3 }),
+            /redirect to disallowed host: evil\.example/i
+        );
+    } finally { https.get = original; }
+});
+
+test("request helper drops credential headers on a cross-origin redirect", async () => {
+    const original = https.get;
+    const seen = [];
+    https.get = (url, options, callback) => {
+        const req = new EventEmitter();
+        seen.push({ url: String(url), headers: options.headers });
+        queueMicrotask(() => {
+            if (seen.length === 1) callback(response(302, "", { location: "https://raw.githubusercontent.com/o/r/main/SKILL.md" }));
+            else callback(response(200, "ok"));
+        });
+        return req;
+    };
+    try {
+        const body = await fetchText("https://api.github.com/repos/o/r", {
+            headers: { Authorization: "Bearer secret-token", Cookie: "session=1", "X-Api-Key": "k", "User-Agent": "ua" }
+        });
+        assert.equal(body, "ok");
+        assert.equal(seen.length, 2);
+        assert.equal(seen[0].headers.Authorization, "Bearer secret-token");
+        assert.equal(seen[1].headers.Authorization, undefined, "Authorization must not cross origins");
+        assert.equal(seen[1].headers.Cookie, undefined);
+        assert.equal(seen[1].headers["X-Api-Key"], undefined);
+        assert.equal(seen[1].headers["User-Agent"], "ua", "non-sensitive headers are preserved");
+    } finally { https.get = original; }
+});
+
+test("request helper preserves headers on a same-origin redirect", async () => {
+    const original = https.get;
+    const seen = [];
+    https.get = (url, options, callback) => {
+        const req = new EventEmitter();
+        seen.push(options.headers);
+        queueMicrotask(() => {
+            if (seen.length === 1) callback(response(302, "", { location: "https://api.github.com/repos/o/r/contents" }));
+            else callback(response(200, "ok"));
+        });
+        return req;
+    };
+    try {
+        await fetchText("https://api.github.com/repos/o/r", { headers: { Authorization: "Bearer t", "User-Agent": "ua" } });
+        assert.equal(seen[1].Authorization, "Bearer t");
+    } finally { https.get = original; }
+});
+
+test("isAllowedRedirectHost accepts known skill hosts and rejects everything else", () => {
+    for (const host of ["raw.githubusercontent.com", "api.github.com", "GitHub.com", "www.skills.sh"]) {
+        assert.equal(isAllowedRedirectHost(host), true, `expected ${host} allowed`);
+    }
+    for (const host of ["evil.example", "githubusercontent.com.evil.test", "", null, "api.github.com.evil.io"]) {
+        assert.equal(isAllowedRedirectHost(host), false, `expected ${String(host)} rejected`);
+    }
 });
