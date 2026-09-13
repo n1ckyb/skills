@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import {
     parseAndValidateGitHubUrl,
     parseGitHubTreeUrl,
+    parseGitHubFolderSpec,
     parseSkillsRegistryUrl,
     getCanonicalSkillSlug,
     validatePathSafety
@@ -452,6 +453,14 @@ export async function readSkillSource(repoOrUrl, targetRevision = null) {
     const githubFolder = parseGitHubTreeUrl(repoOrUrl);
     if (githubFolder) {
         return readGitHubSkillFolder(githubFolder, targetRevision);
+    }
+
+    const shorthandFolder = parseGitHubFolderSpec(repoOrUrl);
+    if (shorthandFolder) {
+        return readGitHubSkillFolder({
+            ...shorthandFolder,
+            ref: "main"
+        }, targetRevision);
     }
 
     const cloneResult = await cloneAndReadRepo(repoOrUrl, targetRevision);

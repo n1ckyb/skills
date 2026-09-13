@@ -101,7 +101,7 @@ When asked for trending, popular, hot, or widely installed skills:
 
 ### Vetting Skills Before Installation
 Before installing any remote skill:
-- Call `skill_explorer_vet(repoOrUrl="owner/repo")`, or pass the exact canonical path such as `github/awesome-copilot/skills/steno-mode`.
+- Call `skill_explorer_vet(repoOrUrl="owner/repo")`, a nested shorthand path such as `mattpocock/skills/skills/engineering/code-review`, or a full GitHub tree URL; pass the exact skill folder rather than the repository root.
 - Review findings summary, risk score, `sourceRevision`, and `contentDigest`.
 - For canonical skills, vet only the exact `skills/<name>/` folder rather than the entire `awesome-copilot` repository.
 - Canonical provenance must not suppress findings, reduce the score, or bypass a block.

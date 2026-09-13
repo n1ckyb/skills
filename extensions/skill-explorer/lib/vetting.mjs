@@ -63,7 +63,7 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
     let isWhitelisted = false;
     let authorOrOrg = "";
     if (repoOrUrl) {
-        const match = repoOrUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/i) || repoOrUrl.match(/^([^\/]+)\/([^\/]+)$/);
+        const match = repoOrUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/i) || repoOrUrl.match(/^([^\/]+)\/([^\/]+)(?:\/|$)/);
         if (match) {
             authorOrOrg = match[1].toLowerCase();
             const repoFull = `${match[1]}/${match[2]}`.toLowerCase().replace(/\.git$/, "");

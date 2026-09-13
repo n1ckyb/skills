@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
     parseAndValidateGitHubUrl,
     parseGitHubTreeUrl,
+    parseGitHubFolderSpec,
     parseSkillsRegistryUrl,
     getCanonicalSkillSlug,
     validatePathSafety
@@ -57,6 +58,16 @@ test("parseGitHubTreeUrl, parseSkillsRegistryUrl, and getCanonicalSkillSlug", ()
     assert.equal(getCanonicalSkillSlug("github/awesome-copilot/skills/steno-mode"), "steno-mode");
     assert.equal(getCanonicalSkillSlug("https://awesome-copilot.github.com/skill/steno-mode"), "steno-mode");
     assert.equal(getCanonicalSkillSlug("mattpocock/skills"), null);
+});
+
+test("parseGitHubFolderSpec accepts nested shorthand skill paths", () => {
+    assert.deepEqual(parseGitHubFolderSpec("mattpocock/skills/skills/engineering/code-review"), {
+        owner: "mattpocock",
+        repo: "skills",
+        folder: "skills/engineering/code-review"
+    });
+    assert.equal(parseGitHubFolderSpec("owner/repo"), null);
+    assert.equal(parseGitHubFolderSpec("owner/repo/../unsafe"), null);
 });
 
 test("validatePathSafety enforces relative path constraints", () => {

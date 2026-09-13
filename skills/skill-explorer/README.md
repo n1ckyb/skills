@@ -125,6 +125,10 @@ Perform static security analysis and return structured review, `sourceRevision` 
 }
 ```
 
+Nested repository skill paths are also supported, for example
+`mattpocock/skills/skills/engineering/code-review`. The repository revision is
+resolved first, then only that exact folder is scanned and digest-pinned.
+
 ### 4. `skill_explorer_install`
 Atomically install a vetted skill after explicit user confirmation.
 

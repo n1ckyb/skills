@@ -103,6 +103,19 @@ export function parseGitHubTreeUrl(repoOrUrl) {
     };
 }
 
+export function parseGitHubFolderSpec(repoOrUrl) {
+    const value = repoOrUrl.trim().replace(/\/+$/, "");
+    const parts = value.split("/");
+    if (parts.length < 3 || parts.some(part => !/^[a-zA-Z0-9_.-]+$/.test(part))) return null;
+    const folder = parts.slice(2).join("/");
+    if (!validatePathSafety(folder)) return null;
+    return {
+        owner: parts[0],
+        repo: parts[1].replace(/\.git$/i, ""),
+        folder
+    };
+}
+
 export function parseSkillsRegistryUrl(repoOrUrl) {
     const trimmed = repoOrUrl.trim().replace(/\/+$/, "");
     const match = trimmed.match(/^https:\/\/(?:www\.)?skills\.sh\/([^/]+)\/([^/]+)\/([^/]+)$/i);
