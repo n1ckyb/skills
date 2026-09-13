@@ -134,7 +134,7 @@ Nested repository skill paths are also supported, for example
 resolved first, then only that exact folder is scanned and digest-pinned.
 
 ### 4. `skill_explorer_install`
-Atomically install a vetted skill after explicit user confirmation.
+Atomically install a vetted skill after explicit user confirmation. The confirmation must repeat the source, scope, immutable revision, and digest returned by vetting. **Install never overwrites different local content**; use synchronization for approved updates.
 
 Do not substitute `npx skills add` for this tool. Direct registry installation bypasses this package's revision pinning, byte digest verification, risk threshold, and confirmation requirements.
 
@@ -143,7 +143,7 @@ Do not substitute `npx skills add` for this tool. Direct registry installation b
   "repoOrUrl": "github/awesome-copilot/skills/steno-mode",
   "scope": "user",
   "userConfirmed": true,
-  "confirmationSummary": "Install steno-mode from canonical source in user scope",
+  "confirmationSummary": "Install github/awesome-copilot/skills/steno-mode in user scope at a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 with digest sha256:1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff",
   "expectedRevision": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
   "expectedDigest": "sha256:1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff"
 }
@@ -158,6 +158,28 @@ View or update user configurations.
   "value": "40"
 }
 ```
+
+### `gh skills install` compatibility wrapper
+
+For terminal users, the repository includes a guarded compatibility wrapper:
+
+```powershell
+node scripts/gh-skills.mjs install github/awesome-copilot diagnose --scope user
+```
+
+The wrapper is not a bypass. It resolves the exact `skills/<name>/` folder, displays the immutable revision, digest, risk score, and findings, requires typing `yes`, and then uses the same atomic installer and verification checks as `skill_explorer_install`.
+
+### Installation workflow
+
+All interfaces use the same `discover → vet → confirm → install/sync` state machine. Vetting produces a compact receipt (source, revision, digest, and risk summary); full shortlist and finding payloads are not persisted. `install` creates a new installation or reports identical content already present. `sync` re-vets a tracked installation at a newly selected revision and can replace different local content only after explicit confirmation.
+
+Discovery preserves successful catalog results when another source fails and returns
+`degraded`, `attemptedSources`, and structured `sourceErrors` fields. Network access
+uses HTTPS timeouts, response-size and redirect bounds, plus an operation request
+budget. Immutable revision resolutions are cached briefly (pinned revision and digest
+verification are still performed at install time). Compact operation state, including
+vetting receipts and installation decisions, is recorded at
+`~/.copilot/skill-explorer-operation-state.json`.
 
 ---
 

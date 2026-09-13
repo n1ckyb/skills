@@ -209,7 +209,8 @@ test("installSkillAtomic performs atomic staging, verification, and collision de
         config: DEFAULT_CONFIG,
         targetDirOverride: targetDir,
         sourceOverride: sourceOverride2,
-        allowReplace: true
+        allowReplace: true,
+        action: "sync"
     });
 
     assert.equal(res3.status, "INSTALLED_SUCCESSFULLY");

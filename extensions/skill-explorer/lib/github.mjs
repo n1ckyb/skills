@@ -1,7 +1,6 @@
 ﻿import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import https from "node:https";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -21,61 +20,28 @@ import {
     SKILLS_DIRECTORY_SITE
 } from "./config.mjs";
 import { validateFileBounds, calculateContentDigest } from "./vetting.mjs";
+import { fetchJson, fetchText, createRequestBudget } from "./http.mjs";
 
 const execFileAsync = promisify(execFile);
 
-export function fetchJson(url) {
-    return new Promise((resolve, reject) => {
-        const options = {
-            headers: {
-                "User-Agent": "Copilot-Skill-Explorer",
-                "Accept": "application/vnd.github.v3+json"
-            }
-        };
-        https.get(url, options, (res) => {
-            let body = "";
-            res.on("data", (chunk) => { body += chunk; });
-            res.on("end", () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    try {
-                        resolve(JSON.parse(body));
-                    } catch (e) {
-                        reject(new Error(`JSON parse error: ${e.message}`));
-                    }
-                } else {
-                    reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
-                }
-            });
-        }).on("error", (err) => reject(err));
-    });
-}
+export { fetchJson, fetchText, createRequestBudget };
 
-export function fetchText(url) {
-    return new Promise((resolve, reject) => {
-        https.get(url, {
-            headers: {
-                "User-Agent": "Copilot-Skill-Explorer",
-                "Accept": "text/plain"
-            }
-        }, (res) => {
-            let body = "";
-            res.on("data", chunk => { body += chunk; });
-            res.on("end", () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(body);
-                } else {
-                    reject(new Error(`HTTP ${res.statusCode}: ${body.substring(0, 200)}`));
-                }
-            });
-        }).on("error", reject);
-    });
-}
+const revisionCache = new Map();
+const REVISION_CACHE_TTL = 5 * 60 * 1000;
+const REVISION_CACHE_MAX = 128;
 
 export async function resolveCommitSha(owner, repo, ref = "main") {
+    if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
+    const cacheKey = `${owner}/${repo}@${ref}`;
+    const cached = revisionCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.sha;
     try {
         const data = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`);
         if (data.sha && /^[a-f0-9]{40}$/i.test(data.sha)) {
-            return data.sha.toLowerCase();
+                const sha = data.sha.toLowerCase();
+                revisionCache.set(cacheKey, { sha, expiresAt: Date.now() + REVISION_CACHE_TTL });
+                while (revisionCache.size > REVISION_CACHE_MAX) revisionCache.delete(revisionCache.keys().next().value);
+                return sha;
         }
     } catch {
         // Fallback to commit object if direct sha is nested
@@ -83,13 +49,17 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
     try {
         const commitData = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
         if (Array.isArray(commitData) && commitData[0]?.sha) {
-            return commitData[0].sha.toLowerCase();
+            const sha = commitData[0].sha.toLowerCase();
+            revisionCache.set(cacheKey, { sha, expiresAt: Date.now() + REVISION_CACHE_TTL });
+            while (revisionCache.size > REVISION_CACHE_MAX) revisionCache.delete(revisionCache.keys().next().value);
+            return sha;
         }
     } catch {
         // Fall back to Git transport when the GitHub API is rate-limited.
     }
     const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, `refs/heads/${ref}`, `refs/tags/${ref}`], {
+    const refs = ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
+    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, ...refs], {
         timeout: 40000,
         shell: false,
         windowsHide: true
@@ -105,24 +75,35 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
 
 export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null) {
     const validated = parseAndValidateGitHubUrl(cloneUrl);
-    const args = ["clone", "--depth", "1", "--single-branch"];
-    if (ref) {
-        args.push("--branch", ref);
+    if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
+        throw new Error("A resolved 40-character commit SHA is required before Git transport can fetch repository content.");
     }
-    args.push(validated.cloneUrl, targetDir);
-
-    await execFileAsync("git", args, {
+    const commitSha = ref.toLowerCase();
+    const gitOptions = ["-c", "protocol.version=2", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"];
+    const commandOptions = {
         timeout: 40000,
         shell: false,
         windowsHide: true
-    });
+    };
+
+    await execFileAsync("git", [...gitOptions, "init", "--quiet", targetDir], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "remote", "add", "origin", validated.cloneUrl], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "fetch", "--depth=1", "--no-tags", "origin", commitSha], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "checkout", "--detach", "--quiet", "FETCH_HEAD"], commandOptions);
+
+    const { stdout } = await execFileAsync("git", ["-C", targetDir, "rev-parse", "HEAD"], commandOptions);
+    if (stdout.trim().toLowerCase() !== commitSha) {
+        throw new Error(`Pinned Git checkout mismatch: expected '${commitSha}', got '${stdout.trim().toLowerCase()}'.`);
+    }
+    return commitSha;
 }
 
 export async function cloneAndReadRepo(repoUrl, targetRevision = null) {
     const validated = parseAndValidateGitHubUrl(repoUrl);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-vet-"));
     try {
-        await cloneRepoSecurely(validated.cloneUrl, tempDir, targetRevision);
+        const commitSha = targetRevision || await resolveCommitSha(validated.owner, validated.repo, "HEAD");
+        await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
 
         // Extract exact HEAD commit SHA
         const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
@@ -208,10 +189,10 @@ export async function readCanonicalSkill(slug, targetRevision = null) {
     };
 }
 
-export async function searchCanonicalSkills(query) {
+export async function searchCanonicalSkills(query, options = {}) {
     const [owner, repo] = CANONICAL_SKILLS_REPO.split("/");
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`;
-    const data = await fetchJson(treeUrl);
+    const data = await fetchJson(treeUrl, options);
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
 
     return (data.tree || [])
@@ -239,10 +220,10 @@ export async function searchCanonicalSkills(query) {
         }));
 }
 
-export async function searchAiHeroSkills(query) {
+export async function searchAiHeroSkills(query, options = {}) {
     const [owner, repo] = AI_HERO_SKILLS_REPO.split("/");
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`;
-    const data = await fetchJson(treeUrl);
+    const data = await fetchJson(treeUrl, options);
     const normalizedQuery = query.toLowerCase().trim();
     const sourceQuery = /^(?:ai[\s-]*hero|matt\s*pocock|mattpocock)(?:\s+skills?)?$/.test(normalizedQuery);
     const terms = normalizedQuery.split(/\s+/).filter(Boolean);
@@ -275,7 +256,7 @@ export async function searchAiHeroSkills(query) {
         }));
 }
 
-export async function listTrendingSkills(period, limit, config) {
+export async function listTrendingSkills(period, limit, config, options = {}) {
     const paths = {
         trending24h: "/trending",
         hot: "/hot",
@@ -287,7 +268,7 @@ export async function listTrendingSkills(period, limit, config) {
         alltime: "All-time installs"
     };
     const pagePath = paths[period] || paths.trending24h;
-    const html = await fetchText(`${SKILLS_DIRECTORY_SITE}${pagePath}`);
+    const html = await fetchText(`${SKILLS_DIRECTORY_SITE}${pagePath}`, options);
     const pattern = /<a\b[^>]*href="\/([^"?#/]+\/[^"?#/]+\/[^"?#/]+)"[^>]*>[\s\S]*?<h3[^>]*>([^<]+)<\/h3>[\s\S]*?<p[^>]*>([^<]+)<\/p>[\s\S]*?<\/a>/gi;
     const results = [];
     const seen = new Set();
@@ -354,13 +335,29 @@ export async function listTrendingSkills(period, limit, config) {
     return results;
 }
 
-export async function searchSkillsDirectory(query, config) {
+export async function searchSkillsDirectory(query, config, options = {}) {
     const terms = query.toLowerCase().replace(/[-_]+/g, " ").split(/\s+/).filter(Boolean);
-    const collections = await Promise.all([
-        listTrendingSkills("alltime", 50, config).catch(() => []),
-        listTrendingSkills("hot", 50, config).catch(() => []),
-        listTrendingSkills("trending24h", 50, config).catch(() => [])
-    ]);
+    const periods = ["alltime", "hot", "trending24h"];
+    const settled = await Promise.allSettled(
+        periods.map(period => listTrendingSkills(period, 50, config, options))
+    );
+    const sourceErrors = settled
+        .map((result, index) => result.status === "rejected"
+            ? {
+                source: `${SKILLS_DIRECTORY_SITE}/${periods[index]}`,
+                error: result.reason?.message || String(result.reason),
+                statusCode: result.reason?.statusCode || null
+            }
+            : null)
+        .filter(Boolean);
+    const collections = settled
+        .filter(result => result.status === "fulfilled")
+        .map(result => result.value);
+    if (collections.length === 0 && sourceErrors.length > 0) {
+        const error = new Error("All skills directory sources failed.");
+        error.sourceErrors = sourceErrors;
+        throw error;
+    }
     const seen = new Set();
     const results = [];
 
@@ -380,7 +377,9 @@ export async function searchSkillsDirectory(query, config) {
         });
     }
 
-    return results.slice(0, 20);
+    const output = results.slice(0, 20);
+    output.sourceErrors = sourceErrors;
+    return output;
 }
 
 export async function readGitHubSkillFolder({ owner, repo, ref, folder }, targetRevision = null) {
@@ -408,19 +407,7 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-folder-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir);
-            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
-            await execFileAsync("git", ["checkout", "--detach", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
             const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
             const folderDir = path.join(tempDir, ...normalizedFolder.split("/"));
             const filesMap = {};
@@ -510,19 +497,7 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-registry-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir);
-            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
-            await execFileAsync("git", ["checkout", "--detach", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
             const matches = [];
             async function findSkillFiles(dir, relative = "") {
                 const entries = await fs.readdir(dir, { withFileTypes: true });
