@@ -82,7 +82,7 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
             category: "Code Execution",
             severity: "HIGH",
             score: 30,
-            regex: /(?:child_process|execSync|spawnSync|exec\s*\(|spawn\(|eval\s*\(|new\s+Function\s*\()/i,
+            regex: /(?:child_process|execSync|spawnSync|exec\s*\(|spawn\(|eval\s*\(|new\s+Function\s*\(|vm\.runInContext|vm\.runInNewContext|vm\.runInThisContext|vm\.compileFunction)/i,
             description: "Potentially dangerous shell or dynamic code execution detected."
         },
         {
@@ -90,15 +90,15 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
             category: "Obfuscation",
             severity: "HIGH",
             score: 25,
-            regex: /(?:Buffer\.from\([^)]*['"]base64['"]\)|atob\s*\(|String\.fromCharCode\s*\(\s*\d+(?:\s*,\s*\d+){3,}\))/i,
-            description: "Base64 or character code obfuscation pattern detected."
+            regex: /(?:Buffer\.from\([^)]*['"]base64['"]\)|atob\s*\(|String\.fromCharCode\s*\(\s*\d+(?:\s*,\s*\d+){3,}\)|\\x[0-9a-fA-F]{2}(?:\\x[0-9a-fA-F]{2}){3,})/i,
+            description: "Base64, hex, or character code obfuscation pattern detected."
         },
         {
             id: "CREDENTIAL_EXFILTRATION",
             category: "Data Security",
             severity: "CRITICAL",
             score: 40,
-            regex: /(?:process\.env\.(?:GITHUB_TOKEN|AWS_SECRET|SLACK_TOKEN|API_KEY|PASSWORD)|(?:id_rsa|\.aws\/credentials|\.env|\.ssh\/id_))/i,
+            regex: /(?:process\.env\.(?:GITHUB_TOKEN|AWS_SECRET|SLACK_TOKEN|API_KEY|PASSWORD|OPENAI_API_KEY|ANTHROPIC_API_KEY)|(?:id_rsa|\.aws\/credentials|\.env|\.ssh\/id_))/i,
             description: "Accessing sensitive tokens, credentials, or SSH/AWS secret files."
         },
         {
@@ -106,16 +106,16 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
             category: "Network Access",
             severity: "MEDIUM",
             score: 20,
-            regex: /(?:https?:\/\/(?:discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com|api\.telegram\.org|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}))/i,
-            description: "Connection to external webhook endpoint or raw IP address."
+            regex: /(?:https?:\/\/(?:discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com|api\.telegram\.org|webhook\.site|pipedream\.net|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}))/i,
+            description: "Connection to external webhook endpoint, exfiltration service, or raw IP address."
         },
         {
             id: "PROMPT_INJECTION",
             category: "Prompt Security",
             severity: "HIGH",
             score: 30,
-            regex: /(?:ignore\s+(?:all\s+)?previous\s+instructions|system\s+prompt\s*:|you\s+are\s+now\s+in\s+unfiltered|jailbreak|override\s+system\s+instructions)/i,
-            description: "Potential prompt injection or system instruction override attempt."
+            regex: /(?:ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+(?:all\s+)?previous\s+instructions|system\s+prompt\s*:|you\s+are\s+now\s+in\s+unfiltered|you\s+are\s+now\s+in\s+developer\s+mode|jailbreak|override\s+system\s+instructions|bypass\s+(?:all\s+)?safety\s+(?:checks|guardrails|rules)|<!--\s*ignore\s+(?:all\s+)?previous\s+instructions)/i,
+            description: "Potential prompt injection, persona manipulation, or system instruction override attempt."
         },
         {
             id: "DESTRUCTIVE_FILE_OPS",
@@ -124,6 +124,14 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
             score: 35,
             regex: /(?:fs\.rmSync|fs\.rm\s*\(|rimraf|unlinkSync|del\s+\/f|\/bin\/rm\s+-rf)/i,
             description: "Destructive file deletion or directory removal operation."
+        },
+        {
+            id: "DYNAMIC_DEPENDENCY_EXECUTION",
+            category: "Dependency & Remote Execution",
+            severity: "HIGH",
+            score: 30,
+            regex: /(?:curl\s+-[^\n|]*\|\s*(?:ba)?sh|wget\s+-[^\n|]*\|\s*(?:ba)?sh|npm\s+install\s+--global\s+http|pip\s+install\s+http)/i,
+            description: "Unverified remote script execution or unpinned network dependency installation."
         }
     ];
 

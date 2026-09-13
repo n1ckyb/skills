@@ -14,7 +14,8 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/skill-shortlist-canvas.mjs extensions/skill-explorer/lib/*.mjs",
+    "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/skill-shortlist-canvas.mjs extensions/skill-explorer/lib/*.mjs scripts/skill-explorer-diagnostics.mjs",
+    "diagnostics": "node scripts/skill-explorer-diagnostics.mjs",
     "skill:validate": "node scripts/validate-skill.mjs",
     "plugin:validate": "node scripts/validate-plugin.mjs"
   },

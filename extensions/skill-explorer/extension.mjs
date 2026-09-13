@@ -23,7 +23,7 @@ import { executeInstallation, vetSkillSource } from "./lib/installation-flow.mjs
 import { recordOperationState } from "./lib/config.mjs";
 import { createRequestBudget } from "./lib/github.mjs";
 import { filterSynchronizedResults } from "./lib/synchronization.mjs";
-import { createBoundedDiagnostics } from "./lib/diagnostics.mjs";
+import { createOperationResponse, operationFailure } from "./lib/operation-response.mjs";
 
 let session;
 session = await joinSession({
@@ -230,33 +230,44 @@ session = await joinSession({
                         }
                     };
                     let observabilityWarning;
-                    let operationReceipt;
                     try {
-                        const state = await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length, complete: response.complete, counters: budget.snapshot() });
-                        operationReceipt = { operation: "search", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
+                        const state = await recordOperationState("search", {
+                            attemptedSources,
+                            sourceErrors,
+                            resultCount: results.length,
+                            complete,
+                            counters: budget.snapshot(),
+                            durationMs: budget.snapshot().elapsedMs,
+                            budgetExhausted: false
+                        });
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
-                    Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
-                    Object.assign(response, budget.snapshot());
-                    if (operationReceipt) response.operationReceipt = operationReceipt;
-                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(response, null, 2);
+                    return JSON.stringify(createOperationResponse({
+                        operation: "search",
+                        result: response,
+                        complete,
+                        sourceErrors,
+                        attemptedSources,
+                        warnings: observabilityWarning ? [observabilityWarning] : [],
+                        counters: budget.snapshot(),
+                        resultCount: results.length
+                    }), null, 2);
                 } catch (err) {
                     let observabilityWarning;
                     try {
-                        await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }],                         resultCount: 0, complete: false, counters: budget.snapshot() });
+                        await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], resultCount: 0, complete: false, counters: budget.snapshot(), durationMs: budget.snapshot().elapsedMs, budgetExhausted: /budget exhausted|operation deadline/i.test(err.message) });
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
                     const fullErrors = [...sourceErrors, { source: "operation", error: err.message }];
-                    const errResp = { results: [], complete: false, degraded: true, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors: fullErrors, attemptedSources }) };
-                    errResp.operationReceipt = { operation: "search", resultCount: 0, complete: false, ...budget.snapshot() };
-                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(errResp);
+                    return JSON.stringify(operationFailure("search", err, {
+                        result: observabilityWarning ? { observabilityWarning } : {},
+                        sourceErrors: fullErrors, attemptedSources, counters: budget.snapshot()
+                    }));
                 }
             }
         },
@@ -294,15 +305,18 @@ session = await joinSession({
                 const results = synchronized.results;
                 const sourceErrors = synchronized.sourceErrors;
                 const attemptedSources = [SKILLS_DIRECTORY_SITE, ...synchronized.attemptedSources];
+                    const complete = sourceErrors.length === 0 && synchronized.complete !== false;
                     let observabilityWarning;
-                    let operationReceipt;
                     try {
                         const state = await recordOperationState("trending", {
                             attemptedSources,
                             sourceErrors,
-                            resultCount: results.length, complete: sourceErrors.length === 0 && synchronized.complete !== false, counters: budget.snapshot()
+                            resultCount: results.length,
+                            complete,
+                            counters: budget.snapshot(),
+                            durationMs: budget.snapshot().elapsedMs,
+                            budgetExhausted: false
                         });
-                        operationReceipt = { operation: "trending", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
@@ -330,8 +344,6 @@ session = await joinSession({
                         period,
                         rankingNote: "Trend rank comes from skills.sh. Source priority is displayed separately and does not replace trend rank.",
                         totalCount: results.length,
-                        complete,
-                        degraded: sourceErrors.length > 0,
                         results,
                         chatUx: {
                             widgetType: "inbox",
@@ -340,36 +352,33 @@ session = await joinSession({
                             nextAction: "Render these cards, then ask which skill to vet. Trending status never bypasses vetting."
                         }
                     };
-                    operationReceipt = { operation: "trending", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
-                    Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
-                    Object.assign(response, budget.snapshot());
-                    if (operationReceipt) response.operationReceipt = operationReceipt;
-                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(response, null, 2);
+                    return JSON.stringify(createOperationResponse({
+                        operation: "trending",
+                        result: response,
+                        complete,
+                        sourceErrors,
+                        attemptedSources,
+                        warnings: observabilityWarning ? [observabilityWarning] : [],
+                        counters: budget.snapshot(),
+                        resultCount: results.length
+                    }), null, 2);
                 } catch (err) {
                     let observabilityWarning;
                     try {
                         await recordOperationState("trending", {
                             attemptedSources: [SKILLS_DIRECTORY_SITE],
                             sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }],
-                            resultCount: 0, complete: false, counters: budget.snapshot()
+                            resultCount: 0, complete: false, counters: budget.snapshot(), durationMs: budget.snapshot().elapsedMs, budgetExhausted: /budget exhausted|operation deadline/i.test(err.message)
                         });
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
-                    const errResp = {
-                        results: [],
-                        complete: false,
-                        degraded: true,
-                        attemptedSources: [SKILLS_DIRECTORY_SITE],
-                        sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }]
-                    };
-                    Object.assign(errResp, budget?.snapshot?.() || {});
-                    Object.assign(errResp, createBoundedDiagnostics({ sourceErrors: errResp.sourceErrors, attemptedSources: errResp.attemptedSources }));
-                    errResp.operationReceipt = { operation: "trending", resultCount: 0, complete: false, ...budget.snapshot() };
-                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(errResp);
+                    return JSON.stringify(operationFailure("trending", err, {
+                        result: observabilityWarning ? { observabilityWarning } : {},
+                        source: SKILLS_DIRECTORY_SITE, attemptedSources: [SKILLS_DIRECTORY_SITE],
+                        counters: budget.snapshot()
+                    }));
                 }
             }
         },
@@ -391,10 +400,10 @@ session = await joinSession({
                 await session.log(`Loading and security-vetting skill '${args.repoOrUrl}'...`);
 
                 let source;
+                const budget = createRequestBudget();
                 try {
-                    const budget = createRequestBudget();
-                const options = { budget };
-                const vetted = await vetSkillSource(args.repoOrUrl, config, options);
+                    const options = { budget };
+                    const vetted = await vetSkillSource(args.repoOrUrl, config, options);
                     source = vetted.source;
                     const vetResult = vetted.vetting;
                     const result = {
@@ -408,22 +417,15 @@ session = await joinSession({
                         review: reviewSkill(source.filesMap, vetResult, source)
                     };
                     publishAssessment(args.repoOrUrl, result);
-                    return JSON.stringify(result, null, 2);
+                    return JSON.stringify(createOperationResponse({
+                        operation: "vet", result, counters: budget.snapshot(), attemptedSources: [args.repoOrUrl],
+                        resultCount: 1
+                    }), null, 2);
                 } catch (err) {
-                    let observabilityWarning;
-                    try {
-                        await recordOperationState("vet", {
-                            attemptedSources: [args.repoOrUrl],
-                            failures: [{ source: args.repoOrUrl, error: err.message }],
-                            installationDecision: "vetting_failed"
-                        });
-                    } catch (recErr) {
-                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
-                        await session.log(`[WARNING] ${observabilityWarning}`);
-                    }
-                    const errResp = { error: `Vetting failed: ${err.message}` };
-                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(errResp);
+                    return JSON.stringify(operationFailure("vet", err, {
+                        message: `Vetting failed: ${err.message}`, source: args.repoOrUrl,
+                        counters: budget.snapshot()
+                    }));
                 } finally {
                     if (source?.tempDir) {
                         await fs.rm(source.tempDir, { recursive: true, force: true }).catch(() => {});
@@ -469,9 +471,9 @@ session = await joinSession({
                 const config = await loadConfig();
                 await session.log(`Preparing installation for '${args.repoOrUrl}' in ${args.scope} scope...`);
 
+                const budget = createRequestBudget();
                 try {
-                    const budget = createRequestBudget();
-                const result = await executeInstallation({
+                    const result = await executeInstallation({
                     action: "install",
                     repoOrUrl: args.repoOrUrl,
                     scope: args.scope,
@@ -483,22 +485,14 @@ session = await joinSession({
                     replaceExisting: false,
                     budget
                 });
-                    return JSON.stringify(result, null, 2);
+                return JSON.stringify(createOperationResponse({
+                    operation: "install", result, counters: budget.snapshot(), resultCount: 1
+                }), null, 2);
                 } catch (err) {
-                    let observabilityWarning;
-                    try {
-                        await recordOperationState("install", {
-                            attemptedSources: [args.repoOrUrl],
-                            failures: [{ source: args.repoOrUrl, error: err.message }],
-                            installationDecision: "failed"
-                        });
-                    } catch (recErr) {
-                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
-                        await session.log(`[WARNING] ${observabilityWarning}`);
-                    }
-                    const errResp = { error: `Installation failed: ${err.message}` };
-                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
-                    return JSON.stringify(errResp);
+                return JSON.stringify(operationFailure("install", err, {
+                    message: `Installation failed: ${err.message}`, source: args.repoOrUrl,
+                    counters: budget.snapshot()
+                    }));
                 }
             }
         },
@@ -529,10 +523,14 @@ session = await joinSession({
             },
             handler: async (args) => {
                 if (!Array.isArray(args.skills) || args.skills.length === 0) {
-                    return JSON.stringify({ error: "At least one skill is required." });
+                    return JSON.stringify(operationFailure("sync", new Error("At least one skill is required.")));
                 }
                 if (args.userConfirmed !== true || !args.confirmationSummary?.trim()) {
-                    return JSON.stringify({ status: "CONFIRMATION_REQUIRED" });
+                    return JSON.stringify(createOperationResponse({
+                        operation: "sync",
+                        result: { status: "CONFIRMATION_REQUIRED" },
+                        attemptedSources: args.skills.map(skill => skill.repoOrUrl)
+                    }));
                 }
                 const config = await loadConfig();
                 const results = [];
@@ -552,7 +550,14 @@ session = await joinSession({
                         results.push({ repoOrUrl: skill.repoOrUrl, error: err.message });
                     }
                 }
-                return JSON.stringify({ results }, null, 2);
+                return JSON.stringify(createOperationResponse({
+                    operation: "sync", result: { results },
+                    complete: results.every(result => !result.error), resultCount: results.length,
+                    attemptedSources: args.skills.map(skill => skill.repoOrUrl),
+                    sourceErrors: results.filter(result => result.error).map(result => ({
+                        source: result.repoOrUrl, error: result.error, statusCode: null
+                    }))
+                }), null, 2);
             }
         },
         {
@@ -578,45 +583,70 @@ session = await joinSession({
 
                 switch (args.action) {
                     case "view":
-                        return JSON.stringify({ configPath: CONFIG_PATH, config }, null, 2);
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { configPath: CONFIG_PATH, config },
+                            complete: true
+                        }), null, 2);
 
                     case "add_trusted_org":
-                        if (!args.value) return JSON.stringify({ error: "Value required for add_trusted_org" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for add_trusted_org")));
                         if (!config.trustedOrgs.map(o => o.toLowerCase()).includes(args.value.toLowerCase())) {
                             config.trustedOrgs.push(args.value.toLowerCase());
                             await saveConfig(config);
                         }
-                        return JSON.stringify({ message: `Added trusted org '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Added trusted org '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "remove_trusted_org":
-                        if (!args.value) return JSON.stringify({ error: "Value required for remove_trusted_org" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for remove_trusted_org")));
                         config.trustedOrgs = config.trustedOrgs.filter(o => o.toLowerCase() !== args.value.toLowerCase());
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Removed trusted org '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Removed trusted org '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "add_trusted_repo":
-                        if (!args.value) return JSON.stringify({ error: "Value required for add_trusted_repo" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for add_trusted_repo")));
                         if (!config.trustedRepos.map(r => r.toLowerCase()).includes(args.value.toLowerCase())) {
                             config.trustedRepos.push(args.value.toLowerCase());
                             await saveConfig(config);
                         }
-                        return JSON.stringify({ message: `Added trusted repo '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Added trusted repo '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "remove_trusted_repo":
-                        if (!args.value) return JSON.stringify({ error: "Value required for remove_trusted_repo" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for remove_trusted_repo")));
                         config.trustedRepos = config.trustedRepos.filter(r => r.toLowerCase() !== args.value.toLowerCase());
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Removed trusted repo '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Removed trusted repo '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
-                    case "set_risk_threshold":
+                    case "set_risk_threshold": {
                         const val = parseInt(args.value, 10);
-                        if (isNaN(val) || val < 0 || val > 100) return JSON.stringify({ error: "Value must be a number between 0 and 100" });
+                        if (isNaN(val) || val < 0 || val > 100) return JSON.stringify(operationFailure("configure", new Error("Value must be a number between 0 and 100")));
                         config.maxRiskThreshold = val;
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Updated risk threshold to ${val}` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Updated risk threshold to ${val}` },
+                            complete: true
+                        }), null, 2);
+                    }
 
                     default:
-                        return JSON.stringify({ error: "Invalid configuration action" });
+                        return JSON.stringify(operationFailure("configure", new Error("Invalid configuration action")));
                 }
             }
         }
