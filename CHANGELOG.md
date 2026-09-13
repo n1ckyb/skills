@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [1.0.0] - 2026-09-13
 
 ### Security
+- Made the risk threshold fail closed. `isBlocked` compared `riskScore >= config.maxRiskThreshold` directly, so a non-numeric threshold (for example `"abc"` or `NaN` from a corrupted or hand-edited `~/.copilot/skill-explorer-config.json`) evaluated to `false` for every score and silently disabled installation blocking entirely. Thresholds are now resolved through `resolveRiskThreshold`, which falls back to the default for any non-finite or out-of-range value.
+- Sanitized persisted configuration on load. `loadConfig` previously merged user JSON straight over the defaults with no validation, so `trustedOrgs` could be a bare string, turning the `.includes(owner)` trust check into a substring match in which an entry of `corp` would trust `evilcorp`. Trust lists, the risk threshold and `autoVetBeforeInstall` are now validated, with a warning emitted for each replaced field.
+- Restricted HTTP redirects to an explicit host allowlist. Only the protocol was previously checked, so any upstream could redirect to an arbitrary HTTPS host and serve skill content under trusted-looking provenance.
+- Credential-bearing headers (`Authorization`, `Cookie`, `Proxy-Authorization`, `X-*-Token`/`Key`/`Auth`) are now dropped on cross-origin redirects rather than being replayed to the new host.
 - Validated every field parsed out of a GitHub tree URL before it reaches the filesystem or Git. `parseGitHubTreeUrl` previously performed no validation at all, so a crafted source such as `.../tree/main/../../etc` escaped the temporary clone directory during the Git clone fallback (which triggers routinely on API rate limits) and could read arbitrary local files. Owner, repo, ref and folder are now each validated, and the parser returns `null` on any failure.
 - Added `isSafeGitRef`, rejecting option-like refs (`--upload-pack=...`), `..` sequences, `.lock` suffixes and other malformed refs before they are passed as arguments to `git ls-remote`.
 - Enforced containment at both skill-folder read sites: a resolved folder that is not inside its checkout root is rejected, so a caller that forgets to validate cannot turn a traversal sequence into a local file disclosure.
@@ -16,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - Hardened the static response-contract check so ad hoc `JSON.stringify` returns (object literals and bare identifiers) can no longer be masked by a valid factory return elsewhere in the same handler.
 
 ### Fixed
+- Operation state logging now survives a corrupted line. A single truncated JSONL record (a process killed mid-append, or a concurrent writer in another process) previously made `loadOperationState` throw, which permanently broke every subsequent append and compaction attempt with no way to self-heal. Malformed lines are now skipped, counted into the observability warning, and removed from disk on the next compaction.
 - `skill_explorer_vet` now forwards the origin-classification `observabilityWarning` and the vetting receipt into its response envelope instead of silently dropping them.
 
 ### Added

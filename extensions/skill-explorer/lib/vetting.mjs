@@ -1,6 +1,7 @@
 ﻿import crypto from "node:crypto";
 import path from "node:path";
 import { validatePathSafety } from "./url.mjs";
+import { resolveRiskThreshold } from "./config.mjs";
 
 /**
  * Skill Explorer Static Analysis & Security Vetting Engine
@@ -312,8 +313,11 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
     else if (riskScore >= 50) status = "HIGH_RISK";
     else if (riskScore >= 20) status = "MEDIUM_RISK";
 
-    // Trust priority NEVER discounts risk score or bypasses maxRiskThreshold
-    const isBlocked = riskScore >= config.maxRiskThreshold;
+    // Trust priority NEVER discounts risk score or bypasses maxRiskThreshold.
+    // The threshold is the security control, so a malformed value must fail closed rather than
+    // silently comparing against NaN (which yields false and installs everything).
+    const threshold = resolveRiskThreshold(config?.maxRiskThreshold);
+    const isBlocked = riskScore >= threshold;
 
     return {
         repoOrUrl,
@@ -322,11 +326,11 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
         riskScore,
         status,
         isBlocked,
-        maxRiskThreshold: config.maxRiskThreshold,
+        maxRiskThreshold: threshold,
         findingsCount: findings.length,
         findings,
         recommendation: isBlocked
-            ? `BLOCKED: Skill risk score (${riskScore}/100) exceeds threshold (${config.maxRiskThreshold}). Automatic installation blocked.`
+            ? `BLOCKED: Skill risk score (${riskScore}/100) exceeds threshold (${threshold}). Automatic installation blocked.`
             : `APPROVED: Skill passed security vetting (Risk Score: ${riskScore}/100).`
     };
 }
