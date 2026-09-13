@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "skill-explorer",
+  "description": "Discover, security-vet, and install GitHub Copilot skills and extensions with explicit provenance, integrity, and risk controls.",
+  "version": "1.0.0",
+  "keywords": [
+    "skills",
+    "security",
+    "discovery",
+    "copilot"
+  ],
+  "author": {
+    "name": "Skill Explorer Community"
+  },
+  "repository": "https://github.com/n1ckyb/skills",
+  "license": "MIT",
+  "extensions": {
+    "com.github.awesome-copilot": {
+      "skills": [
+        "./skills/skill-explorer/"
+      ],
+      "extensions": [
+        "./extensions/skill-explorer"
+      ]
+    },
+    "com.github.copilot": {
+      "logo": "assets/preview.png"
+    }
+  }
+}

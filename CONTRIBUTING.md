@@ -16,3 +16,21 @@ Thank you for your interest in contributing to `skill-explorer`!
    npm test
    ```
 4. **Security Focus**: Any change affecting URL parsing, git execution, file bounds, or vetting rules must include corresponding unit tests in `tests/`.
+
+## Plugin and extension conventions
+
+This repository follows the official Awesome GitHub Copilot contribution model:
+
+- Skills live in `skills/<skill-name>/` and contain `SKILL.md` frontmatter with
+  a matching lowercase hyphenated `name`.
+- Reusable extension source lives in `extensions/<extension-id>/`.
+- Plugins live in `plugins/<plugin-id>/plugin.json` and reference source paths
+  under `skills/` and `extensions/`.
+- Plugin manifests must include `name`, `description`, semantic `version`,
+  `author.name`, `repository`, and `license`.
+- Extension plugins must include
+  `extensions.com.github.copilot.logo: "assets/preview.png"` and a matching
+  `assets/preview.png`.
+- Do not add `canvas.json`; plugin manifests provide extension website metadata.
+- Validate plugin manifests with the upstream repository's
+  `npm run plugin:validate` when contributing this package there.
