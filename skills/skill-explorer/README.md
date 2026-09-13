@@ -179,7 +179,9 @@ uses HTTPS timeouts, response-size and redirect bounds, plus an operation reques
 budget. Immutable revision resolutions are cached briefly (pinned revision and digest
 verification are still performed at install time). Compact operation state, including
 vetting receipts and installation decisions, is recorded at
-`~/.copilot/skill-explorer-operation-state.json`.
+`~/.copilot/skill-explorer-operation-state.json` as append-only JSONL. If a receipt
+cannot be persisted, the operation reports an `observabilityWarning` rather than
+silently claiming complete observability.
 
 ---
 

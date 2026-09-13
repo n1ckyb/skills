@@ -25,7 +25,7 @@ import { executeInstallation, vetSkillSource } from "./lib/installation-flow.mjs
 import { recordOperationState } from "./lib/config.mjs";
 import { createRequestBudget } from "./lib/github.mjs";
 
-async function filterSynchronizedResults(results) {
+async function filterSynchronizedResults(results, options = {}) {
     const registry = await loadInstalledRegistry();
     const visible = [];
     for (const result of results) {
@@ -36,7 +36,7 @@ async function filterSynchronizedResults(results) {
             continue;
         }
         try {
-            const current = await readSkillSource(source);
+            const current = await readSkillSource(source, null, options);
             if (current.sourceRevision !== installed.sourceRevision || current.contentDigest !== installed.contentDigest) {
                 visible.push({ ...result, syncStatus: "Update available" });
             }
@@ -73,6 +73,7 @@ session = await joinSession({
                 const source = args.source || "all";
                 const q = args.query;
                 const budget = createRequestBudget();
+                const options = { budget };
                 const sourceErrors = [];
                 const attemptedSources = [];
                 const loadSource = async (name, loader) => {
@@ -100,13 +101,13 @@ session = await joinSession({
                 try {
                     const canonicalResults = source === "community"
                         ? []
-                        : await loadSource(CANONICAL_SKILLS_REPO, () => searchCanonicalSkills(q, { budget }));
+                        : await loadSource(CANONICAL_SKILLS_REPO, () => searchCanonicalSkills(q, options));
                     const aiHeroResults = source === "community"
                         ? []
-                        : await loadSource(AI_HERO_SKILLS_REPO, () => searchAiHeroSkills(q, { budget }));
+                        : await loadSource(AI_HERO_SKILLS_REPO, () => searchAiHeroSkills(q, options));
                     const directoryResults = source === "community"
                         ? []
-                        : (await loadSource(SKILLS_DIRECTORY_SITE, () => searchSkillsDirectory(q, config, { budget })))
+                        : (await loadSource(SKILLS_DIRECTORY_SITE, () => searchSkillsDirectory(q, config, options)))
                             .filter(item => ![CANONICAL_SKILLS_REPO, AI_HERO_SKILLS_REPO]
                                 .includes(item.sourceRepository.toLowerCase()));
 
@@ -114,7 +115,7 @@ session = await joinSession({
                     const urlPrimary = `https://api.github.com/search/repositories?q=${encodeURIComponent(primaryQuery)}&sort=stars&per_page=20`;
                     attemptedSources.push("github-search");
                     let dataPrimary;
-                    try { dataPrimary = await fetchJson(urlPrimary, { budget }); }
+                    try { dataPrimary = await fetchJson(urlPrimary, options); }
                     catch (error) {
                         sourceErrors.push({ source: "github-search", error: error.message, statusCode: error.statusCode || null });
                         dataPrimary = { items: [] };
@@ -125,7 +126,7 @@ session = await joinSession({
                         const fallbackQuery = `${q} (skill OR copilot OR extension)`;
                         const urlFallback = `https://api.github.com/search/repositories?q=${encodeURIComponent(fallbackQuery)}&sort=stars&per_page=15`;
                         try {
-                            const dataFallback = await fetchJson(urlFallback, { budget });
+                            const dataFallback = await fetchJson(urlFallback, options);
                             rawItems = dataFallback.items || [];
                         } catch (error) {
                             sourceErrors.push({ source: "github-search-fallback", error: error.message, statusCode: error.statusCode || null });
@@ -180,7 +181,7 @@ session = await joinSession({
                         return b.stars - a.stars;
                     });
 
-                    const results = await filterSynchronizedResults([...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped]);
+                    const results = await filterSynchronizedResults([...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped], options);
                     publishCandidates(q, results.map(result => ({
                         name: result.name,
                         source: result.fullName || result.sourceRepository || result.url,
@@ -241,11 +242,26 @@ session = await joinSession({
                             nextAction: "Render inbox cards, open the skill-shortlist canvas with shortlistCanvas.input, then ask the user which skill to vet. Do not install directly from search results."
                         }
                     };
-                    await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length }).catch(() => {});
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
+                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(response, null, 2);
                 } catch (err) {
-                    await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], resultCount: 0 }).catch(() => {});
-                    return JSON.stringify({ results: [], degraded: true, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], attemptedSources });
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], resultCount: 0 });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
+                    const errResp = { results: [], degraded: true, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], attemptedSources };
+                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
+                    return JSON.stringify(errResp);
                 }
             }
         },
@@ -275,12 +291,20 @@ session = await joinSession({
                 await session.log(`Loading ${period} skills from skills.sh...`);
 
                 try {
-                    const results = await filterSynchronizedResults(await listTrendingSkills(period, limit, config));
-                    await recordOperationState("trending", {
-                        attemptedSources: [SKILLS_DIRECTORY_SITE],
-                        sourceErrors: [],
-                        resultCount: results.length
-                    }).catch(() => {});
+                    const budget = createRequestBudget();
+                const options = { budget };
+                const results = await filterSynchronizedResults(await listTrendingSkills(period, limit, config, options), options);
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("trending", {
+                            attemptedSources: [SKILLS_DIRECTORY_SITE],
+                            sourceErrors: [],
+                            resultCount: results.length
+                        });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
                     const items = results.map(result => {
                         const card = toSkillCard(result);
                         card.description = `#${result.trendRank} ${result.rankingPeriod}. ${result.description}`;
@@ -312,17 +336,25 @@ session = await joinSession({
                         }
                     }, null, 2);
                 } catch (err) {
-                    await recordOperationState("trending", {
-                        attemptedSources: [SKILLS_DIRECTORY_SITE],
-                        sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }],
-                        resultCount: 0
-                    }).catch(() => {});
-                    return JSON.stringify({
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("trending", {
+                            attemptedSources: [SKILLS_DIRECTORY_SITE],
+                            sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }],
+                            resultCount: 0
+                        });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
+                    const errResp = {
                         results: [],
                         degraded: true,
                         attemptedSources: [SKILLS_DIRECTORY_SITE],
                         sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }]
-                    });
+                    };
+                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
+                    return JSON.stringify(errResp);
                 }
             }
         },
@@ -345,7 +377,9 @@ session = await joinSession({
 
                 let source;
                 try {
-                    const vetted = await vetSkillSource(args.repoOrUrl, config);
+                    const budget = createRequestBudget();
+                const options = { budget };
+                const vetted = await vetSkillSource(args.repoOrUrl, config, options);
                     source = vetted.source;
                     const vetResult = vetted.vetting;
                     const result = {
@@ -361,12 +395,20 @@ session = await joinSession({
                     publishAssessment(args.repoOrUrl, result);
                     return JSON.stringify(result, null, 2);
                 } catch (err) {
-                    await recordOperationState("vet", {
-                        attemptedSources: [args.repoOrUrl],
-                        failures: [{ source: args.repoOrUrl, error: err.message }],
-                        installationDecision: "vetting_failed"
-                    }).catch(() => {});
-                    return JSON.stringify({ error: `Vetting failed: ${err.message}` });
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("vet", {
+                            attemptedSources: [args.repoOrUrl],
+                            failures: [{ source: args.repoOrUrl, error: err.message }],
+                            installationDecision: "vetting_failed"
+                        });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
+                    const errResp = { error: `Vetting failed: ${err.message}` };
+                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
+                    return JSON.stringify(errResp);
                 } finally {
                     if (source?.tempDir) {
                         await fs.rm(source.tempDir, { recursive: true, force: true }).catch(() => {});
@@ -413,25 +455,35 @@ session = await joinSession({
                 await session.log(`Preparing installation for '${args.repoOrUrl}' in ${args.scope} scope...`);
 
                 try {
-                    const result = await executeInstallation({
-                        action: "install",
-                        repoOrUrl: args.repoOrUrl,
-                        scope: args.scope,
-                        userConfirmed: args.userConfirmed,
-                        confirmationSummary: args.confirmationSummary,
-                        expectedRevision: args.expectedRevision,
-                        expectedDigest: args.expectedDigest,
-                        config,
-                        replaceExisting: false
-                    });
+                    const budget = createRequestBudget();
+                const result = await executeInstallation({
+                    action: "install",
+                    repoOrUrl: args.repoOrUrl,
+                    scope: args.scope,
+                    userConfirmed: args.userConfirmed,
+                    confirmationSummary: args.confirmationSummary,
+                    expectedRevision: args.expectedRevision,
+                    expectedDigest: args.expectedDigest,
+                    config,
+                    replaceExisting: false,
+                    budget
+                });
                     return JSON.stringify(result, null, 2);
                 } catch (err) {
-                    await recordOperationState("install", {
-                        attemptedSources: [args.repoOrUrl],
-                        failures: [{ source: args.repoOrUrl, error: err.message }],
-                        installationDecision: "failed"
-                    }).catch(() => {});
-                    return JSON.stringify({ error: `Installation failed: ${err.message}` });
+                    let observabilityWarning;
+                    try {
+                        await recordOperationState("install", {
+                            attemptedSources: [args.repoOrUrl],
+                            failures: [{ source: args.repoOrUrl, error: err.message }],
+                            installationDecision: "failed"
+                        });
+                    } catch (recErr) {
+                        observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
+                        await session.log(`[WARNING] ${observabilityWarning}`);
+                    }
+                    const errResp = { error: `Installation failed: ${err.message}` };
+                    if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
+                    return JSON.stringify(errResp);
                 }
             }
         },
@@ -471,14 +523,16 @@ session = await joinSession({
                 const results = [];
                 for (const skill of args.skills) {
                     try {
-                        results.push(await executeInstallation({
-                            ...skill,
-                            action: "sync",
-                            userConfirmed: true,
-                            confirmationSummary: args.confirmationSummary,
-                            config,
-                            replaceExisting: args.replaceExisting === true
-                        }));
+                        const budget = createRequestBudget();
+                    results.push(await executeInstallation({
+                        ...skill,
+                        action: "sync",
+                        userConfirmed: true,
+                        confirmationSummary: args.confirmationSummary,
+                        config,
+                        replaceExisting: args.replaceExisting === true,
+                        budget
+                    }));
                     } catch (err) {
                         results.push({ repoOrUrl: skill.repoOrUrl, error: err.message });
                     }

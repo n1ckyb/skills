@@ -41,7 +41,8 @@ export async function installSkillAtomic({
     targetDirOverride = null,
     sourceOverride = null,
     allowReplace = false,
-    action = "install"
+    action = "install",
+    options = {}
 }) {
     if (userConfirmed !== true || !confirmationSummary?.trim()) {
         return {
@@ -70,7 +71,7 @@ export async function installSkillAtomic({
     let source = sourceOverride;
     if (!source) {
         try {
-            source = await readSkillSource(repoOrUrl, cleanExpectedSha);
+            source = await readSkillSource(repoOrUrl, cleanExpectedSha, options);
         } catch (err) {
             throw new Error(`Failed to resolve upstream skill source at revision '${cleanExpectedSha}': ${err.message}`);
         }

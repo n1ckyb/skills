@@ -50,7 +50,8 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and security-testing gu
 Discovery reports partial results explicitly when a source is unavailable (`degraded`,
 `attemptedSources`, and `sourceErrors`). Network calls use bounded HTTPS requests,
 per-operation budgets, and bounded immutable revision caching; operation receipts are
-recorded in `~/.copilot/skill-explorer-operation-state.json`.
+recorded as append-only JSONL in `~/.copilot/skill-explorer-operation-state.json`.
+If persistence fails, the affected result includes an `observabilityWarning`.
 
 ## License
 

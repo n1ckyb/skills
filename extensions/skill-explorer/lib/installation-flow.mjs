@@ -15,8 +15,23 @@ function confirmationCovers({ confirmationSummary, repoOrUrl, scope, expectedRev
         && summary.includes(expectedDigest.toLowerCase());
 }
 
-export async function vetSkillSource(repoOrUrl, config) {
-    const source = await readSkillSource(repoOrUrl);
+export async function vetSkillSource(repoOrUrl, config, options = {}) {
+    let source;
+    try {
+        source = await readSkillSource(repoOrUrl, null, options);
+    } catch (err) {
+        try {
+            await recordOperationState("vet", {
+                attemptedSources: [repoOrUrl],
+                failures: [{ source: repoOrUrl, error: err.message }],
+                installationDecision: "vetting_failed"
+            });
+        } catch (recordErr) {
+            console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
+        }
+        throw err;
+    }
+
     const vetting = vetFilesMap(source.filesMap, repoOrUrl, config);
     const result = {
         source,
@@ -29,12 +44,21 @@ export async function vetSkillSource(repoOrUrl, config) {
             status: vetting.status
         }
     };
-    await recordOperationState("vet", {
-        attemptedSources: [repoOrUrl],
-        failures: [],
-        vettingReceipt: result.receipt,
-        installationDecision: vetting.isBlocked ? "blocked" : "pending"
-    }).catch(() => {});
+
+    try {
+        await recordOperationState("vet", {
+            attemptedSources: [repoOrUrl],
+            failures: [],
+            vettingReceipt: result.receipt,
+            installationDecision: vetting.isBlocked ? "blocked" : "pending"
+        });
+    } catch (recordErr) {
+        const warning = `Failed to persist operation state: ${recordErr.message}`;
+        console.warn(`[WARNING] ${warning}`);
+        result.observabilityWarning = warning;
+        result.receipt.observabilityWarning = warning;
+    }
+
     return result;
 }
 
@@ -47,8 +71,11 @@ export async function executeInstallation({
     expectedRevision,
     expectedDigest,
     config,
-    replaceExisting = false
+    replaceExisting = false,
+    budget,
+    options = {}
 }) {
+    const operationOptions = budget ? { ...options, budget } : options;
     if (!["install", "sync"].includes(action)) {
         throw new Error(`Unsupported installation action '${action}'.`);
     }
@@ -59,12 +86,18 @@ export async function executeInstallation({
             status: "CONFIRMATION_REQUIRED",
             reason: "Confirmation must explicitly include the source, scope, expected revision, and expected digest from the vetting receipt."
         };
-        await recordOperationState("install", {
-            attemptedSources: [repoOrUrl],
-            failures: [],
-            vettingReceipt: { expectedRevision, expectedDigest },
-            installationDecision: result.status
-        }).catch(() => {});
+        try {
+            await recordOperationState("install", {
+                attemptedSources: [repoOrUrl],
+                failures: [],
+                vettingReceipt: { expectedRevision, expectedDigest },
+                installationDecision: result.status
+            });
+        } catch (recordErr) {
+            const warning = `Failed to persist operation state: ${recordErr.message}`;
+            console.warn(`[WARNING] ${warning}`);
+            result.observabilityWarning = warning;
+        }
         return result;
     }
 
@@ -78,22 +111,46 @@ export async function executeInstallation({
         }
     }
 
-    const result = await installSkillAtomic({
-        repoOrUrl,
-        scope,
-        userConfirmed,
-        confirmationSummary,
-        expectedRevision,
-        expectedDigest,
-        config,
-        allowReplace: action === "sync" && replaceExisting,
-        action
-    });
-    await recordOperationState("install", {
-        attemptedSources: [repoOrUrl],
-        failures: [],
-        vettingReceipt: { expectedRevision, expectedDigest },
-        installationDecision: result.status
-    }).catch(() => {});
+    let result;
+    try {
+        result = await installSkillAtomic({
+            repoOrUrl,
+            scope,
+            userConfirmed,
+            confirmationSummary,
+            expectedRevision,
+            expectedDigest,
+            config,
+            allowReplace: action === "sync" && replaceExisting,
+            action,
+            options: operationOptions
+        });
+    } catch (err) {
+        try {
+            await recordOperationState("install", {
+                attemptedSources: [repoOrUrl],
+                failures: [{ source: repoOrUrl, error: err.message }],
+                vettingReceipt: { expectedRevision, expectedDigest },
+                installationDecision: "failed"
+            });
+        } catch (recordErr) {
+            console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
+        }
+        throw err;
+    }
+
+    try {
+        await recordOperationState("install", {
+            attemptedSources: [repoOrUrl],
+            failures: [],
+            vettingReceipt: { expectedRevision, expectedDigest },
+            installationDecision: result.status
+        });
+    } catch (recordErr) {
+        const warning = `Failed to persist operation state: ${recordErr.message}`;
+        console.warn(`[WARNING] ${warning}`);
+        result.observabilityWarning = warning;
+    }
+
     return result;
 }
