@@ -165,9 +165,11 @@ session = await joinSession({
                                 input: {
                                     candidates: results.map(result => ({
                                         name: result.name,
-                                        source: result.url,
+                                        source: result.fullName || result.sourceRepository || result.url,
                                         description: result.description,
-                                        url: result.url
+                                        url: result.url,
+                                        trustTier: result.trustTierLabel,
+                                        status: "Not vetted"
                                     }))
                                 }
                             },
