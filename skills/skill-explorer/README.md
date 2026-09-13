@@ -196,6 +196,13 @@ counts, while the full diagnostics remain in local operation state. If a receipt
 cannot be persisted, the operation reports an `observabilityWarning` rather than
 silently claiming complete observability.
 
+All search, trending, vet, install, and sync results share an operation envelope:
+`operation`, `complete`, `counters`, bounded diagnostics, `warnings`,
+`budgetExhausted`, and `operationReceipt`; existing operation-specific fields remain
+available. Run `npm run diagnostics` in this repository to inspect local duration,
+budget exhaustion, source availability, state compaction, and fallback frequency.
+This report reads local JSONL state only and sends no telemetry.
+
 ---
 
 ## Configuration

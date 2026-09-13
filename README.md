@@ -57,6 +57,13 @@ filesystem-operation, request, and elapsed-time counters and are recorded as bou
 `~/.copilot/skill-explorer-operation-state.jsonl`.
 If persistence fails, the affected result includes an `observabilityWarning`.
 
+Search, trending, vet, install, and sync responses share one envelope with an
+`operation` identifier, `complete`, `counters`, bounded diagnostics, `warnings`,
+`budgetExhausted`, and `operationReceipt`, while retaining operation-specific fields.
+Run `npm run diagnostics` to summarize local operation durations, exhausted budgets,
+source availability, state compaction, and fallback frequency. The report reads local
+JSONL state only and sends no telemetry.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

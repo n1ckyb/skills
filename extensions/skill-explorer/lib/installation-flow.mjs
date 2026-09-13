@@ -23,8 +23,11 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
         try {
             await recordOperationState("vet", {
                 attemptedSources: [repoOrUrl],
-                failures: [{ source: repoOrUrl, error: err.message }],
-                installationDecision: "vetting_failed"
+                sourceErrors: [{ source: repoOrUrl, error: err.message }],
+                installationDecision: "vetting_failed",
+                counters: options.budget?.snapshot?.() || {},
+                durationMs: options.budget?.snapshot?.().elapsedMs || 0,
+                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message)
             });
         } catch (recordErr) {
             console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
@@ -50,7 +53,10 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
             attemptedSources: [repoOrUrl],
             failures: [],
             vettingReceipt: result.receipt,
-            installationDecision: vetting.isBlocked ? "blocked" : "pending"
+            installationDecision: vetting.isBlocked ? "blocked" : "pending",
+            counters: options.budget?.snapshot?.() || {},
+            durationMs: options.budget?.snapshot?.().elapsedMs || 0,
+            budgetExhausted: false
         });
     } catch (recordErr) {
         const warning = `Failed to persist operation state: ${recordErr.message}`;
@@ -87,11 +93,14 @@ export async function executeInstallation({
             reason: "Confirmation must explicitly include the source, scope, expected revision, and expected digest from the vetting receipt."
         };
         try {
-            await recordOperationState("install", {
+            await recordOperationState(action, {
                 attemptedSources: [repoOrUrl],
                 failures: [],
                 vettingReceipt: { expectedRevision, expectedDigest },
-                installationDecision: result.status
+                installationDecision: result.status,
+                counters: budget?.snapshot?.() || {},
+                durationMs: budget?.snapshot?.().elapsedMs || 0,
+                budgetExhausted: false
             });
         } catch (recordErr) {
             const warning = `Failed to persist operation state: ${recordErr.message}`;
@@ -127,11 +136,14 @@ export async function executeInstallation({
         });
     } catch (err) {
         try {
-            await recordOperationState("install", {
+            await recordOperationState(action, {
                 attemptedSources: [repoOrUrl],
                 failures: [{ source: repoOrUrl, error: err.message }],
                 vettingReceipt: { expectedRevision, expectedDigest },
-                installationDecision: "failed"
+                installationDecision: "failed",
+                counters: budget?.snapshot?.() || {},
+                durationMs: budget?.snapshot?.().elapsedMs || 0,
+                budgetExhausted: /budget exhausted|operation deadline/i.test(err.message)
             });
         } catch (recordErr) {
             console.warn(`[WARNING] Failed to record operation state: ${recordErr.message}`);
@@ -140,11 +152,14 @@ export async function executeInstallation({
     }
 
     try {
-        await recordOperationState("install", {
+        await recordOperationState(action, {
             attemptedSources: [repoOrUrl],
             failures: [],
             vettingReceipt: { expectedRevision, expectedDigest },
-            installationDecision: result.status
+            installationDecision: result.status,
+            counters: budget?.snapshot?.() || {},
+            durationMs: budget?.snapshot?.().elapsedMs || 0,
+            budgetExhausted: false
         });
     } catch (recordErr) {
         const warning = `Failed to persist operation state: ${recordErr.message}`;
