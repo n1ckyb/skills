@@ -36,7 +36,27 @@ jobs:
         run: npm run plugin:validate
 
       - name: Run Tests
+        env:
+          SKILL_EXPLORER_ORIGIN: test
         run: npm test
 
-      - name: Run Diagnostics
-        run: npm run diagnostics
+      - name: Validate Operation Contracts
+        run: npm run contract:validate
+
+      - name: Validate Origin Separation
+        run: npm run origin:validate
+
+      - name: Run Production Diagnostics
+        env:
+          SKILL_EXPLORER_ORIGIN: production
+        run: npm run diagnostics -- --prod
+
+      - name: Run Development Diagnostics
+        env:
+          SKILL_EXPLORER_ORIGIN: development
+        run: npm run diagnostics -- --dev
+
+      - name: Run Test Diagnostics
+        env:
+          SKILL_EXPLORER_ORIGIN: test
+        run: npm run diagnostics -- --test

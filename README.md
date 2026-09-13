@@ -26,6 +26,10 @@ Each skill is independently discoverable under `skills/<skill-name>/SKILL.md`. A
 Plugins are declarative manifests under `plugins/<plugin-name>/`. They reference
 the source skills and extensions rather than copying or materializing them.
 
+### Skill Explorer module boundaries
+
+`extension.mjs` registers public tools and translates their results to the shared response envelope; it does not own transport, policy, or filesystem behavior. The `lib/` modules remain deliberately narrow: `config.mjs` owns local state and origin classification, `github.mjs`/`http.mjs` own bounded remote transport, `vetting.mjs` owns static analysis and immutable digests, `installation-flow.mjs` enforces approval and pinning policy, `installer.mjs` makes filesystem changes atomically, and `diagnostics.mjs` only summarizes recorded local state. This separation keeps the security gates centralized without a broad rewrite.
+
 ## Available skills
 
 ### [skill-explorer](skills/skill-explorer/)
@@ -46,6 +50,8 @@ npm run check
 npm test
 npm run diagnostics
 ```
+
+Development and test runs should set `SKILL_EXPLORER_ORIGIN` explicitly. `npm test` sets it to `test`; use `npm run diagnostics:prod`, `npm run diagnostics:dev`, or `npm run diagnostics:test` for intentionally separated local diagnostic views.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and security-testing guidance. See [`SECURITY.md`](SECURITY.md) to report vulnerabilities privately.
 
@@ -79,6 +85,8 @@ Operation state entries persist explicit `origin` and `environment` markers (`pr
 3. `COPILOT_ENVIRONMENT` environment variable.
 4. `NODE_ENV` heuristic mapping (`test` -> `test`, `dev`/`development` -> `development`, other -> `production`).
 5. Safe fallback default: `"production"`.
+
+When this final fallback is used, the receipt and stored record include `originResolution` metadata and an `observabilityWarning`; diagnostics surface the count so implicit production classification is visible rather than silent.
 
 ### Local Diagnostics, Origin Filtering & Time Windows
 

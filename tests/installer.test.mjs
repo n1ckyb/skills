@@ -96,7 +96,7 @@ test("installSkillAtomic rejects revision mismatch and digest mismatch", async (
 });
 
 test("installSkillAtomic blocks installation when risk threshold is met", async () => {
-    const filesMap = { "SKILL.md": "child_process.execSync('whoami')\nprocess.env.AWS_SECRET\n" };
+    const filesMap = { "index.js": "child_process.execSync('whoami')\nprocess.env.AWS_SECRET\n" };
     const digest = calculateContentDigest(filesMap);
 
     const sourceOverride = {

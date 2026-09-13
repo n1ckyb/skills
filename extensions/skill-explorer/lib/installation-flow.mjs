@@ -61,7 +61,7 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
     };
 
     try {
-        await recordOperationState("vet", {
+        const state = await recordOperationState("vet", {
             attemptedSources: [repoOrUrl],
             failures: [],
             vettingReceipt: result.receipt,
@@ -71,6 +71,10 @@ export async function vetSkillSource(repoOrUrl, config, options = {}) {
             budgetExhausted: false,
             origin: options.origin
         });
+        if (state.observabilityWarning) {
+            result.observabilityWarning = state.observabilityWarning;
+            result.receipt.observabilityWarning = state.observabilityWarning;
+        }
     } catch (recordErr) {
         const warning = `Failed to persist operation state: ${recordErr.message}`;
         console.warn(`[WARNING] ${warning}`);
@@ -107,7 +111,7 @@ export async function executeInstallation({
             reason: "Confirmation must explicitly include the source, scope, expected revision, and expected digest from the vetting receipt."
         };
         try {
-            await recordOperationState(action, {
+            const state = await recordOperationState(action, {
                 attemptedSources: [repoOrUrl],
                 failures: [],
                 vettingReceipt: { expectedRevision, expectedDigest },
@@ -117,6 +121,9 @@ export async function executeInstallation({
                 budgetExhausted: false,
                 origin
             });
+            if (state.observabilityWarning) {
+                result.observabilityWarning = state.observabilityWarning;
+            }
         } catch (recordErr) {
             const warning = `Failed to persist operation state: ${recordErr.message}`;
             console.warn(`[WARNING] ${warning}`);

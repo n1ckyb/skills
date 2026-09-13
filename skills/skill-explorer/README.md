@@ -133,6 +133,8 @@ Operation state entries persist explicit `origin` and `environment` markers (`pr
 4. **Node Environment**: `NODE_ENV` heuristic (`test` -> `test`, `dev`/`development` -> `development`, other -> `production`).
 5. **Safe Default**: `"production"`.
 
+Development tooling, CI, and test harnesses should set `SKILL_EXPLORER_ORIGIN` explicitly. The compatibility fallback remains available for legacy callers, but records `originResolution` metadata and an `observabilityWarning`; diagnostics report fallback-classified records.
+
 ---
 
 ## Local Diagnostics, Window & Origin Filtering
@@ -282,6 +284,6 @@ $$\text{Overall Score} = (\text{Utility} \times 0.30) + (\text{Clarity} \times 0
 4. **Collision Protection**: Atomic staging prevents directory corruption. Rejects installation if target exists with a differing digest.
 
 ### Static Analysis Limitations & False Positives
-- **Static Pattern Heuristics**: Static regex scanning inspects file contents without runtime execution. Benign documentation mentioning dangerous APIs (e.g. `child_process` in reference docs) may trigger detection.
+- **Static Pattern Heuristics**: Code-execution, network, credential, obfuscation, and destructive-operation rules scan executable/configuration files and fenced Markdown code blocks; prose references such as `child_process` in reference documentation do not create findings. Prompt-injection rules intentionally scan all text, including prose.
 - **No Runtime Guarantee**: Static analysis cannot detect obfuscated dynamic network calls or post-install environmental tampering.
 - **No Claim of Absolute Safety**: Skills are reported as `no suspicious static patterns detected`, never as "proven safe".

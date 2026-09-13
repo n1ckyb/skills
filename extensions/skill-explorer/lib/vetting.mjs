@@ -16,8 +16,8 @@ import { validatePathSafety } from "./url.mjs";
  * - Enforcing safety gates: risk threshold blocking, untrusted provenance verification, and zero risk discounts for trusted sources.
  *
  * Known Limitations & False-Positive Review:
- * - Pattern-matching heuristics scan file contents line-by-line; benign markdown documentation that mentions
- *   dangerous APIs as examples (e.g., in a security guideline or tool description) can trigger rule matches.
+ * - Code-execution heuristics scan executable/configuration files and fenced Markdown code blocks. They do not
+ *   treat prose references to dangerous APIs as findings, while prompt-injection rules intentionally scan all text.
  * - Skills that manage cloud environments and legitimate credential workflows may trigger CREDENTIAL_EXFILTRATION.
  * - Obfuscation heuristics look for raw base64 buffer decodes and long hex escape chains; legitimate asset bundling
  *   or font definitions may match OBFUSCATION_PATTERNS.
@@ -86,6 +86,15 @@ export const VETTING_RULES = Object.freeze([
         description: "Unverified remote script execution or unpinned network dependency installation."
     })
 ]);
+
+const DOCUMENTATION_FILE_PATTERN = /\.(?:md|mdx|txt)$/i;
+const EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN = /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|cs|php|sh|bash|zsh|ps1|ya?ml|json)$/i;
+
+function appliesToLine(rule, filePath, inCodeFence) {
+    if (rule.id === "PROMPT_INJECTION") return true;
+    return EXECUTABLE_OR_CONFIGURATION_FILE_PATTERN.test(filePath)
+        || (DOCUMENTATION_FILE_PATTERN.test(filePath) && inCodeFence);
+}
 
 export function validateFileBounds(filesMap) {
     const filePaths = Object.keys(filesMap);
@@ -166,11 +175,16 @@ export function vetFilesMap(filesMap, repoOrUrl, config) {
         const textContent = Buffer.isBuffer(content) ? content.toString("utf8") : content;
         const lines = textContent.split(/\r?\n/);
         const ruleMatchesInFile = new Map();
+        let inCodeFence = false;
 
         lines.forEach((line, idx) => {
+            if (DOCUMENTATION_FILE_PATTERN.test(filePath) && /^\s*```/.test(line)) {
+                inCodeFence = !inCodeFence;
+                return;
+            }
             const snippet = line.trim().substring(0, 120);
             for (const rule of rules) {
-                if (rule.regex.test(line)) {
+                if (appliesToLine(rule, filePath, inCodeFence) && rule.regex.test(line)) {
                     findings.push({
                         ruleId: rule.id,
                         category: rule.category,

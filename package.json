@@ -16,6 +16,11 @@
     "test": "node scripts/run-tests.mjs",
     "check": "node --check extensions/skill-explorer/extension.mjs extensions/skill-explorer/skill-shortlist-canvas.mjs extensions/skill-explorer/lib/*.mjs scripts/skill-explorer-diagnostics.mjs",
     "diagnostics": "node scripts/skill-explorer-diagnostics.mjs",
+    "diagnostics:prod": "node scripts/skill-explorer-diagnostics.mjs --prod",
+    "diagnostics:dev": "node scripts/skill-explorer-diagnostics.mjs --dev",
+    "diagnostics:test": "node scripts/skill-explorer-diagnostics.mjs --test",
+    "contract:validate": "node --test --test-name-pattern=\"static contract\" tests/operation-response.test.mjs",
+    "origin:validate": "node --test --test-name-pattern=\"origin\" tests/operation-response.test.mjs",
     "skill:validate": "node scripts/validate-skill.mjs",
     "plugin:validate": "node scripts/validate-plugin.mjs"
   },

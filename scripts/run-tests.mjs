@@ -16,7 +16,9 @@ if (testFiles.length === 0) {
 
 const child = spawn(process.execPath, ["--test", ...testFiles], {
     cwd: rootDir,
-    stdio: "inherit"
+    stdio: "inherit",
+    // The test harness must never write telemetry classified as production.
+    env: { ...process.env, SKILL_EXPLORER_ORIGIN: "test" }
 });
 
 child.on("error", error => {
