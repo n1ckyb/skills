@@ -31,7 +31,7 @@ export function toSkillCard(result) {
         url: result.url,
         labels: [
             { kind: "status", value: sourceStatus, variant: sourceVariant },
-            { kind: "status", value: "Not vetted", variant: "status-attention" }
+            { kind: "status", value: result.syncStatus || "Not vetted", variant: "status-attention" }
         ],
         metadata: {
             source: result.fullName,
