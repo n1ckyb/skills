@@ -167,13 +167,15 @@ session = await joinSession({
                     const results = synchronized.results;
                     sourceErrors.push(...synchronized.sourceErrors);
                     attemptedSources.push(...synchronized.attemptedSources);
+                    const complete = sourceErrors.length === 0 && synchronized.complete !== false;
                     publishCandidates(q, results.map(result => ({
                         name: result.name,
                         source: result.fullName || result.sourceRepository || result.url,
                         description: result.description,
                         url: result.url,
                         trustTier: result.trustTierLabel,
-                        status: "Not vetted"
+                        status: "Not vetted",
+                        complete
                     })));
                     const response = {
                         searchQuery: q,
@@ -203,6 +205,7 @@ session = await joinSession({
                             "Priority 6: Unverified Community"
                         ],
                         results,
+                        complete: sourceErrors.length === 0 && synchronized.complete !== false,
                         degraded: sourceErrors.length > 0,
                         chatUx: {
                             widgetType: "inbox",
@@ -218,7 +221,8 @@ session = await joinSession({
                                         description: result.description,
                                         url: result.url,
                                         trustTier: result.trustTierLabel,
-                                        status: "Not vetted"
+                                        status: "Not vetted",
+                                        complete
                                     }))
                                 }
                             },
@@ -228,27 +232,29 @@ session = await joinSession({
                     let observabilityWarning;
                     let operationReceipt;
                     try {
-                        const state = await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length });
-                        operationReceipt = { operation: "search", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
+                        const state = await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length, complete: response.complete, counters: budget.snapshot() });
+                        operationReceipt = { operation: "search", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
                     Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
+                    Object.assign(response, budget.snapshot());
                     if (operationReceipt) response.operationReceipt = operationReceipt;
                     if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(response, null, 2);
                 } catch (err) {
                     let observabilityWarning;
                     try {
-                        await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }], resultCount: 0 });
+                        await recordOperationState("search", { attemptedSources, sourceErrors: [...sourceErrors, { source: "operation", error: err.message }],                         resultCount: 0, complete: false, counters: budget.snapshot() });
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
                     const fullErrors = [...sourceErrors, { source: "operation", error: err.message }];
-                    const errResp = { results: [], degraded: true, ...createBoundedDiagnostics({ sourceErrors: fullErrors, attemptedSources }) };
+                    const errResp = { results: [], complete: false, degraded: true, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors: fullErrors, attemptedSources }) };
+                    errResp.operationReceipt = { operation: "search", resultCount: 0, complete: false, ...budget.snapshot() };
                     if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
                     return JSON.stringify(errResp);
                 }
@@ -278,9 +284,8 @@ session = await joinSession({
                 const period = args.period || "trending24h";
                 const limit = args.limit || 20;
                 await session.log(`Loading ${period} skills from skills.sh...`);
-
+                const budget = createRequestBudget();
                 try {
-                    const budget = createRequestBudget();
                 const options = { budget };
                 const synchronized = await filterSynchronizedResults(
                     await listTrendingSkills(period, limit, config, options),
@@ -295,7 +300,7 @@ session = await joinSession({
                         const state = await recordOperationState("trending", {
                             attemptedSources,
                             sourceErrors,
-                            resultCount: results.length
+                            resultCount: results.length, complete: sourceErrors.length === 0 && synchronized.complete !== false, counters: budget.snapshot()
                         });
                         operationReceipt = { operation: "trending", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
@@ -325,6 +330,7 @@ session = await joinSession({
                         period,
                         rankingNote: "Trend rank comes from skills.sh. Source priority is displayed separately and does not replace trend rank.",
                         totalCount: results.length,
+                        complete,
                         degraded: sourceErrors.length > 0,
                         results,
                         chatUx: {
@@ -334,7 +340,9 @@ session = await joinSession({
                             nextAction: "Render these cards, then ask which skill to vet. Trending status never bypasses vetting."
                         }
                     };
+                    operationReceipt = { operation: "trending", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
                     Object.assign(response, createBoundedDiagnostics({ sourceErrors, attemptedSources }));
+                    Object.assign(response, budget.snapshot());
                     if (operationReceipt) response.operationReceipt = operationReceipt;
                     if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(response, null, 2);
@@ -344,7 +352,7 @@ session = await joinSession({
                         await recordOperationState("trending", {
                             attemptedSources: [SKILLS_DIRECTORY_SITE],
                             sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }],
-                            resultCount: 0
+                            resultCount: 0, complete: false, counters: budget.snapshot()
                         });
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
@@ -352,10 +360,14 @@ session = await joinSession({
                     }
                     const errResp = {
                         results: [],
+                        complete: false,
                         degraded: true,
                         attemptedSources: [SKILLS_DIRECTORY_SITE],
                         sourceErrors: [{ source: SKILLS_DIRECTORY_SITE, error: err.message, statusCode: err.statusCode || null }]
                     };
+                    Object.assign(errResp, budget?.snapshot?.() || {});
+                    Object.assign(errResp, createBoundedDiagnostics({ sourceErrors: errResp.sourceErrors, attemptedSources: errResp.attemptedSources }));
+                    errResp.operationReceipt = { operation: "trending", resultCount: 0, complete: false, ...budget.snapshot() };
                     if (observabilityWarning) errResp.observabilityWarning = observabilityWarning;
                     return JSON.stringify(errResp);
                 }

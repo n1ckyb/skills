@@ -7,7 +7,8 @@ export const INSTALLED_REGISTRY_PATH = path.join(os.homedir(), ".copilot", "skil
 export const OPERATION_STATE_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-operation-state.jsonl");
 export const OPERATION_STATE_RETENTION = Object.freeze({
     maxBytes: 256 * 1024,
-    maxRecords: 200
+    maxRecords: 200,
+    compactEvery: 25
 });
 export const CANONICAL_SKILLS_REPO = "github/awesome-copilot";
 export const CANONICAL_SKILLS_ROOT = "skills";
@@ -87,6 +88,7 @@ export async function saveInstalledRecord(record, registryPath = INSTALLED_REGIS
 }
 
 const stateWriteQueues = new Map();
+const stateAppendCounts = new Map();
 
 function enqueueStateWrite(statePath, operation) {
     const previous = stateWriteQueues.get(statePath) || Promise.resolve();
@@ -129,7 +131,18 @@ export async function recordOperationState(operation, state, statePath = OPERATI
         try {
             await fs.mkdir(path.dirname(statePath), { recursive: true });
             await fs.appendFile(statePath, line, "utf8");
-            const { droppedRecordCount } = await compactOperationState(statePath, retention);
+            const appendCount = (stateAppendCounts.get(statePath) || 0) + 1;
+            const stat = await fs.stat(statePath);
+            const shouldCompact = appendCount >= (retention.compactEvery || 25)
+                || appendCount > retention.maxRecords
+                || stat.size > retention.maxBytes;
+            let droppedRecordCount = 0;
+            if (shouldCompact) {
+                ({ droppedRecordCount } = await compactOperationState(statePath, retention));
+                stateAppendCounts.set(statePath, 0);
+            } else {
+                stateAppendCounts.set(statePath, appendCount);
+            }
             return droppedRecordCount > 0
                 ? { ...entry, droppedRecordCount, observabilityWarning: `Operation state retention dropped ${droppedRecordCount} older record(s).` }
                 : entry;

@@ -32,7 +32,8 @@ function validateCandidates(input) {
             description: String(candidate.description || "").slice(0, 500),
             url: safeUrl(String(candidate.url || "").slice(0, 1000)),
             trustTier: String(candidate.trustTier || "Community").slice(0, 120),
-            status: String(candidate.status || "Not vetted").slice(0, 40)
+            status: String(candidate.status || "Not vetted").slice(0, 40),
+            complete: candidate.complete !== false
         };
     });
 }
@@ -51,6 +52,7 @@ function renderCard(candidate, index) {
             <span class="badge">${escapeHtml(candidate.trustTier)}</span>
           </div>
           <p class="description">${escapeHtml(candidate.description || "No description provided.")}</p>
+          ${candidate.complete === false ? '<p class="status" data-complete-warning>Some discovery sources or synchronization checks failed; verify before acting.</p>' : ""}
           <div class="card-footer">
             <span class="status" data-status><span class="status-dot"></span>${escapeHtml(candidate.status)}</span>
             <div class="actions">
@@ -163,7 +165,7 @@ export function publishCandidates(query, incoming) {
             if (entry.candidates.length >= 50) break;
             entry.candidates.push(candidate);
             const index = entry.candidates.length - 1;
-            const payload = JSON.stringify({ index, html: renderCard(candidate, index) });
+            const payload = JSON.stringify({ index, html: renderCard(candidate, index), complete: candidate.complete });
             for (const client of entry.clients) client.write(`event: candidates\ndata: ${payload}\n\n`);
         }
     }

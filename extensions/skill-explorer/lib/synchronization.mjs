@@ -32,5 +32,5 @@ export async function filterSynchronizedResults(results, options = {}) {
             visible.push({ ...result, syncStatus: "Sync check unavailable" });
         }
     }
-    return { results: visible, sourceErrors, attemptedSources };
+    return { results: visible, sourceErrors, attemptedSources, complete: sourceErrors.length === 0 };
 }

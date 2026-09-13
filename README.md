@@ -47,10 +47,13 @@ npm test
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and security-testing guidance. See [`SECURITY.md`](SECURITY.md) to report vulnerabilities privately.
 
-Discovery reports partial results explicitly when a source is unavailable (`degraded`,
-`attemptedSources`, and `sourceErrors`). Network calls use bounded HTTPS requests,
+Discovery reports partial results explicitly when a source or synchronization check is
+unavailable (`complete: false`, `degraded`, `attemptedSources`, and `sourceErrors`);
+`complete: true` is emitted only when every attempted source and sync check succeeds.
+The same completion state is carried into shortlist cards. Network calls use bounded HTTPS requests,
 Per-operation budgets, bounded Git fallback transport, and bounded immutable revision
-caching; operation receipts are recorded as bounded JSONL in
+caching. Operation receipts expose separate HTTP, Git command, child-process,
+filesystem-operation, request, and elapsed-time counters and are recorded as bounded JSONL in
 `~/.copilot/skill-explorer-operation-state.jsonl`.
 If persistence fails, the affected result includes an `observabilityWarning`.
 

@@ -45,12 +45,45 @@ test("synchronized result diagnostics preserve failures while keeping results vi
         }
     );
     assert.equal(result.results[0].syncStatus, "Sync check unavailable");
+    assert.equal(result.complete, false);
     assert.deepEqual(result.attemptedSources, ["sync:owner/repo"]);
     assert.deepEqual(result.sourceErrors, [{
         source: "sync:owner/repo",
         error: "upstream unavailable",
         statusCode: 503
     }]);
+});
+
+test("operation state compaction is thresholded and retains bounded diagnostics under load", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "state-load-"));
+    const statePath = path.join(tempDir, "operation-state.jsonl");
+    try {
+        const receipts = await Promise.all(Array.from({ length: 100 }, (_, index) =>
+            recordOperationState("load", { index }, statePath, { maxBytes: 32 * 1024, maxRecords: 25, compactEvery: 25 })
+        ));
+        const history = await loadOperationState(statePath);
+        assert.ok(history.length <= 25);
+        assert.ok(history.every(entry => entry.index >= 75));
+        assert.ok(receipts.some(receipt => receipt.droppedRecordCount > 0));
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test("request budget exposes independent transport counters", async () => {
+    const budget = createRequestBudget({ maxRequests: 3, timeoutMs: 10_000 });
+    budget.take("httpRequests");
+    budget.take("gitCommands");
+    budget.count("childProcesses");
+    budget.count("filesystemOperations", 4);
+    const snapshot = budget.snapshot();
+    assert.equal(snapshot.httpRequests, 1);
+    assert.equal(snapshot.gitCommands, 1);
+    assert.equal(snapshot.childProcesses, 1);
+    assert.equal(snapshot.filesystemOperations, 4);
+    assert.equal(snapshot.requestsAttempted, 2);
+    assert.equal(snapshot.requestsRemaining, 1);
+    assert.equal(typeof snapshot.elapsedMs, "number");
 });
 
 test("model diagnostics are capped while reporting complete local counts", () => {

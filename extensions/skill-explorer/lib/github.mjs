@@ -31,7 +31,8 @@ const REVISION_CACHE_TTL = 5 * 60 * 1000;
 const REVISION_CACHE_MAX = 128;
 
 export async function runGitCommand(args, options = {}) {
-    options.budget?.take();
+    options.budget?.take("gitCommands");
+    options.budget?.count("childProcesses");
     const remainingMs = (options.budget?.deadline || Date.now() + 40_000) - Date.now();
     if (remainingMs <= 0) throw new Error("Operation request budget exhausted");
     const controller = new AbortController();

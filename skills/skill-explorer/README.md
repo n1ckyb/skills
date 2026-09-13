@@ -174,7 +174,9 @@ The wrapper is not a bypass. It resolves the exact `skills/<name>/` folder, disp
 All interfaces use the same `discover → vet → confirm → install/sync` state machine. Vetting produces a compact receipt (source, revision, digest, and risk summary); full shortlist and finding payloads are not persisted. `install` creates a new installation or reports identical content already present. `sync` re-vets a tracked installation at a newly selected revision and can replace different local content only after explicit confirmation.
 
 Discovery preserves successful catalog results when another source fails and returns
-`degraded`, `attemptedSources`, and structured `sourceErrors` fields. Network access
+`complete: false`, `degraded`, `attemptedSources`, and structured `sourceErrors` fields.
+`complete: true` is returned only when every attempted catalog source and synchronization
+check succeeds; this state is also attached to shortlist/card payloads. Network access
 uses HTTPS timeouts, response-size and redirect bounds, plus an operation request
 budget shared with the bounded Git fallback transport. Every Git process is cancelled
 at the operation deadline, consumes budget for each init, remote, fetch, checkout,
@@ -183,9 +185,12 @@ revision resolutions are cached briefly (pinned revision and digest verification
 still performed at install time). Compact operation state, including vetting receipts
 and installation decisions, is recorded at
 `~/.copilot/skill-explorer-operation-state.jsonl` as bounded JSONL (200 records or
-256 KiB). Rotation uses a temporary file and rename; a receipt reports the number of
-dropped older records as an `observabilityWarning`. Search and trending preserve sync
-check failures in their source diagnostics and operation receipts. Model-facing
+256 KiB). Compaction is thresholded (every 25 appends, when the byte limit is exceeded,
+or when retention would be exceeded), uses a temporary file and rename, and is serialized
+per state path. A receipt reports the number of dropped older records as an
+`observabilityWarning`. Search and trending preserve sync check failures in their source
+diagnostics and operation receipts. Receipts expose separate HTTP-request, Git-command,
+child-process, filesystem-operation, request-budget, and elapsed-time counters. Model-facing
 diagnostics are capped (20 errors and 50 attempted sources) with total and omitted
 counts, while the full diagnostics remain in local operation state. If a receipt
 cannot be persisted, the operation reports an `observabilityWarning` rather than
