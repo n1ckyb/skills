@@ -86,6 +86,7 @@ When requested to find skills for a domain or tool (e.g. Jira, Docker, Postgres)
 - Prefer Priority 0 canonical matches over all other sources.
 - Prefer Priority 1 AI Hero matches over every source except Priority 0 canonical matches.
 - Prefer Priority 2 Agent Skills Directory matches over all remaining sources, but never treat directory presence as trust or vetting.
+- Omit previously installed skills when their recorded source revision and content digest still match upstream; retain changed skills with an update status. Treat installs without Skill Explorer metadata as unknown rather than synchronized.
 - Ask: `Which skill should I vet?` with visible result names as choices. Include `Cancel` when appropriate.
 - Resolve the selected result to its exact repository and skill directory before vetting; do not install directly from a registry result.
 

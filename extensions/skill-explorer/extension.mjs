@@ -9,7 +9,8 @@ import {
     CANONICAL_SKILLS_SITE,
     AI_HERO_SKILLS_REPO,
     AI_HERO_SKILLS_SITE,
-    SKILLS_DIRECTORY_SITE
+    SKILLS_DIRECTORY_SITE,
+    loadInstalledRegistry
 } from "./lib/config.mjs";
 import {
     searchCanonicalSkills,
@@ -22,6 +23,28 @@ import {
 import { vetFilesMap } from "./lib/vetting.mjs";
 import { reviewSkill, toSkillCard } from "./lib/review.mjs";
 import { installSkillAtomic } from "./lib/installer.mjs";
+
+async function filterSynchronizedResults(results) {
+    const registry = await loadInstalledRegistry();
+    const visible = [];
+    for (const result of results) {
+        const source = result.fullName || result.sourceRepository || result.url;
+        const installed = registry[source];
+        if (!installed) {
+            visible.push(result);
+            continue;
+        }
+        try {
+            const current = await readSkillSource(source);
+            if (current.sourceRevision !== installed.sourceRevision || current.contentDigest !== installed.contentDigest) {
+                visible.push({ ...result, syncStatus: "Update available" });
+            }
+        } catch {
+            visible.push({ ...result, syncStatus: "Sync check unavailable" });
+        }
+    }
+    return visible;
+}
 
 let session;
 session = await joinSession({
@@ -127,7 +150,7 @@ session = await joinSession({
                         return b.stars - a.stars;
                     });
 
-                    const results = [...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped];
+                    const results = await filterSynchronizedResults([...canonicalResults, ...aiHeroResults, ...directoryResults, ...mapped]);
                     publishCandidates(q, results.map(result => ({
                         name: result.name,
                         source: result.fullName || result.sourceRepository || result.url,
@@ -216,7 +239,7 @@ session = await joinSession({
                 await session.log(`Loading ${period} skills from skills.sh...`);
 
                 try {
-                    const results = await listTrendingSkills(period, limit, config);
+                    const results = await filterSynchronizedResults(await listTrendingSkills(period, limit, config));
                     const items = results.map(result => {
                         const card = toSkillCard(result);
                         card.description = `#${result.trendRank} ${result.rankingPeriod}. ${result.description}`;

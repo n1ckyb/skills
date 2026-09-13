@@ -4,6 +4,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { readSkillSource } from "./github.mjs";
 import { vetFilesMap, calculateContentDigest, validateFileBounds } from "./vetting.mjs";
+import { saveInstalledRecord } from "./config.mjs";
 
 export async function scanDirectoryFiles(dirPath) {
     const filesMap = {};
@@ -122,6 +123,14 @@ export async function installSkillAtomic({
             const existingFiles = await scanDirectoryFiles(targetDir);
             const existingDigest = calculateContentDigest(existingFiles).toLowerCase();
             if (existingDigest === cleanExpectedDigest) {
+                await saveInstalledRecord({
+                    name: skillName,
+                    source: repoOrUrl,
+                    sourceRevision: cleanExpectedSha,
+                    contentDigest: actualDigest,
+                    scope,
+                    targetDirectory: targetDir
+                });
                 return {
                     status: "ALREADY_INSTALLED",
                     skillName,
@@ -158,7 +167,14 @@ export async function installSkillAtomic({
             }
 
             await fs.rename(stagingDir, targetDir);
-
+            await saveInstalledRecord({
+                name: skillName,
+                source: repoOrUrl,
+                sourceRevision: cleanExpectedSha,
+                contentDigest: actualDigest,
+                scope,
+                targetDirectory: targetDir
+            });
             return {
                 status: "INSTALLED_SUCCESSFULLY",
                 skillName,

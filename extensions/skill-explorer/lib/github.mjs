@@ -80,10 +80,25 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
     } catch {
         // Fallback to commit object if direct sha is nested
     }
-    // Attempt tree resolution
-    const commitData = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
-    if (Array.isArray(commitData) && commitData[0]?.sha) {
-        return commitData[0].sha.toLowerCase();
+    try {
+        const commitData = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
+        if (Array.isArray(commitData) && commitData[0]?.sha) {
+            return commitData[0].sha.toLowerCase();
+        }
+    } catch {
+        // Fall back to Git transport when the GitHub API is rate-limited.
+    }
+    const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
+    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, `refs/heads/${ref}`, `refs/tags/${ref}`], {
+        timeout: 40000,
+        shell: false,
+        windowsHide: true
+    });
+    const match = stdout.split(/\r?\n/)
+        .map(line => line.trim().split(/\s+/))
+        .find(parts => parts.length === 2 && /^[a-f0-9]{40}$/i.test(parts[0]))?.[0];
+    if (match) {
+        return match.toLowerCase();
     }
     throw new Error(`Unable to resolve 40-character commit SHA for ${owner}/${repo} at ref '${ref}'`);
 }
@@ -371,7 +386,13 @@ export async function searchSkillsDirectory(query, config) {
 export async function readGitHubSkillFolder({ owner, repo, ref, folder }, targetRevision = null) {
     const commitSha = targetRevision || await resolveCommitSha(owner, repo, ref || "main");
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`;
-    const data = await fetchJson(treeUrl);
+    let data;
+    try {
+        data = await fetchJson(treeUrl);
+    } catch (error) {
+        if (!/HTTP 403|HTTP 429/i.test(error.message)) throw error;
+        return readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha);
+    }
     const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
     const prefix = `${normalizedFolder}/`;
 
@@ -381,6 +402,56 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
 
     if (!files.some(item => item.path === `${prefix}SKILL.md`)) {
         throw new Error(`GitHub folder '${owner}/${repo}/${normalizedFolder}' does not contain SKILL.md`);
+    }
+
+    async function readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha) {
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-folder-vet-"));
+        try {
+            const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
+            await cloneRepoSecurely(validated.cloneUrl, tempDir);
+            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
+                cwd: tempDir,
+                timeout: 40000,
+                shell: false,
+                windowsHide: true
+            });
+            await execFileAsync("git", ["checkout", "--detach", commitSha], {
+                cwd: tempDir,
+                timeout: 40000,
+                shell: false,
+                windowsHide: true
+            });
+            const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
+            const folderDir = path.join(tempDir, ...normalizedFolder.split("/"));
+            const filesMap = {};
+            async function readDir(dir, base = "") {
+                const entries = await fs.readdir(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    if (entry.name === ".git" || entry.name === ".gitmodules") continue;
+                    const fullPath = path.join(dir, entry.name);
+                    const relativePath = base ? `${base}/${entry.name}` : entry.name;
+                    const lstat = await fs.lstat(fullPath);
+                    if (lstat.isSymbolicLink()) throw new Error(`Symlink detected and rejected: '${relativePath}'`);
+                    if (entry.isDirectory()) await readDir(fullPath, relativePath);
+                    else if (entry.isFile()) filesMap[relativePath] = await fs.readFile(fullPath);
+                }
+            }
+            await readDir(folderDir);
+            if (!filesMap["SKILL.md"]) {
+                throw new Error(`GitHub folder '${owner}/${repo}/${normalizedFolder}' does not contain SKILL.md`);
+            }
+            validateFileBounds(filesMap);
+            return {
+                filesMap,
+                skillName: normalizedFolder.split("/").at(-1),
+                vetScope: `${owner}/${repo}/${normalizedFolder}/`,
+                provenance: "github-folder",
+                sourceRevision: commitSha,
+                contentDigest: calculateContentDigest(filesMap)
+            };
+        } finally {
+            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        }
     }
 
     const filesMap = {};
@@ -409,9 +480,15 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
 
 export async function readRegistrySkill({ owner, repo, slug }, targetRevision = null) {
     const commitSha = targetRevision || await resolveCommitSha(owner, repo, "main");
-    const data = await fetchJson(
-        `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`
-    );
+    let data;
+    try {
+        data = await fetchJson(
+            `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`
+        );
+    } catch (error) {
+        if (!/HTTP 403|HTTP 429/i.test(error.message)) throw error;
+        return readRegistrySkillFromClone({ owner, repo, slug }, commitSha);
+    }
 
     const suffix = `/${slug}/SKILL.md`.toLowerCase();
     const candidates = (data.tree || [])
@@ -427,6 +504,80 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
 
     if (candidates.length === 0) {
         throw new Error(`Could not locate the '${slug}' SKILL.md in ${owner}/${repo}`);
+    }
+
+    async function readRegistrySkillFromClone({ owner, repo, slug }, commitSha) {
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-registry-vet-"));
+        try {
+            const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
+            await cloneRepoSecurely(validated.cloneUrl, tempDir);
+            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
+                cwd: tempDir,
+                timeout: 40000,
+                shell: false,
+                windowsHide: true
+            });
+            await execFileAsync("git", ["checkout", "--detach", commitSha], {
+                cwd: tempDir,
+                timeout: 40000,
+                shell: false,
+                windowsHide: true
+            });
+            const matches = [];
+            async function findSkillFiles(dir, relative = "") {
+                const entries = await fs.readdir(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    if (entry.name === ".git" || entry.name === ".gitmodules") continue;
+                    const fullPath = path.join(dir, entry.name);
+                    const next = relative ? `${relative}/${entry.name}` : entry.name;
+                    if (entry.isDirectory()) {
+                        await findSkillFiles(fullPath, next);
+                    } else if (entry.isFile() && entry.name === "SKILL.md" && path.posix.basename(relative).toLowerCase() === slug.toLowerCase()) {
+                        matches.push(relative);
+                    }
+                }
+            }
+            await findSkillFiles(tempDir);
+            const preferredRoots = ["skills/", ".agents/skills/", ".claude/skills/"];
+            const folder = matches.sort((a, b) => {
+                const rank = value => {
+                    const index = preferredRoots.findIndex(root => value.toLowerCase().startsWith(root));
+                    return index === -1 ? preferredRoots.length : index;
+                };
+                return rank(a) - rank(b) || a.length - b.length;
+            })[0];
+            if (!folder) throw new Error(`Could not locate the '${slug}' SKILL.md in ${owner}/${repo}`);
+            return readSkillFolderFromWorkingTree(tempDir, folder, owner, repo, commitSha, "skills-registry");
+        } finally {
+            await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        }
+    }
+
+    async function readSkillFolderFromWorkingTree(rootDir, normalizedFolder, owner, repo, commitSha, provenance) {
+        const folderDir = path.join(rootDir, ...normalizedFolder.split("/"));
+        const filesMap = {};
+        async function readDir(dir, base = "") {
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                const relativePath = base ? `${base}/${entry.name}` : entry.name;
+                const lstat = await fs.lstat(fullPath);
+                if (lstat.isSymbolicLink()) throw new Error(`Symlink detected and rejected: '${relativePath}'`);
+                if (entry.isDirectory()) await readDir(fullPath, relativePath);
+                else if (entry.isFile()) filesMap[relativePath] = await fs.readFile(fullPath);
+            }
+        }
+        await readDir(folderDir);
+        if (!filesMap["SKILL.md"]) throw new Error(`GitHub folder '${owner}/${repo}/${normalizedFolder}' does not contain SKILL.md`);
+        validateFileBounds(filesMap);
+        return {
+            filesMap,
+            skillName: normalizedFolder.split("/").at(-1),
+            vetScope: `${owner}/${repo}/${normalizedFolder}/`,
+            provenance,
+            sourceRevision: commitSha,
+            contentDigest: calculateContentDigest(filesMap)
+        };
     }
 
     const skillFile = candidates[0].path;
@@ -457,6 +608,14 @@ export async function readSkillSource(repoOrUrl, targetRevision = null) {
 
     const shorthandFolder = parseGitHubFolderSpec(repoOrUrl);
     if (shorthandFolder) {
+        const parts = repoOrUrl.trim().replace(/\/+$/, "").split("/");
+        if (parts.length === 3) {
+            return readRegistrySkill({
+                owner: shorthandFolder.owner,
+                repo: shorthandFolder.repo,
+                slug: parts[2]
+            }, targetRevision);
+        }
         return readGitHubSkillFolder({
             ...shorthandFolder,
             ref: "main"
