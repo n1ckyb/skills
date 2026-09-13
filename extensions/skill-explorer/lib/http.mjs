@@ -12,13 +12,29 @@ export class RequestBudget {
         this.remaining = maxRequests;
         this.deadline = Date.now() + timeoutMs;
         this.attempted = 0;
+        this.counters = { httpRequests: 0, gitCommands: 0, childProcesses: 0, filesystemOperations: 0 };
+        this.startedAt = Date.now();
     }
 
-    take() {
+    take(kind = "httpRequests") {
         if (this.remaining <= 0) throw new Error("Request budget exhausted");
         if (Date.now() >= this.deadline) throw new Error("Operation request budget exhausted");
         this.remaining--;
         this.attempted++;
+        if (Object.prototype.hasOwnProperty.call(this.counters, kind)) this.counters[kind]++;
+    }
+
+    count(kind, amount = 1) {
+        if (Object.prototype.hasOwnProperty.call(this.counters, kind)) this.counters[kind] += amount;
+    }
+
+    snapshot() {
+        return {
+            ...this.counters,
+            requestsAttempted: this.attempted,
+            requestsRemaining: this.remaining,
+            elapsedMs: Math.max(0, Date.now() - this.startedAt)
+        };
     }
 }
 
@@ -30,7 +46,7 @@ export function requestText(url, options = {}) {
     const config = { ...DEFAULT_HTTP_OPTIONS, ...options };
     const budget = config.budget;
     const request = (target, redirects) => new Promise((resolve, reject) => {
-        try { budget?.take(); } catch (error) { reject(error); return; }
+        try { budget?.take("httpRequests"); } catch (error) { reject(error); return; }
 
         let settled = false;
         let timer = null;

@@ -30,6 +30,32 @@ const revisionCache = new Map();
 const REVISION_CACHE_TTL = 5 * 60 * 1000;
 const REVISION_CACHE_MAX = 128;
 
+export async function runGitCommand(args, options = {}) {
+    options.budget?.take("gitCommands");
+    options.budget?.count("childProcesses");
+    const remainingMs = (options.budget?.deadline || Date.now() + 40_000) - Date.now();
+    if (remainingMs <= 0) throw new Error("Operation request budget exhausted");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remainingMs);
+    try {
+        const execute = options.executeGit || ((commandArgs, commandOptions) =>
+            execFileAsync("git", commandArgs, commandOptions));
+        return await execute(args, {
+            timeout: remainingMs,
+            signal: controller.signal,
+            shell: false,
+            windowsHide: true
+        });
+    } catch (error) {
+        if (controller.signal.aborted || error?.name === "AbortError") {
+            throw new Error("Git transport exceeded the operation deadline");
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 export async function resolveCommitSha(owner, repo, ref = "main", options = {}) {
     if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
     const cacheKey = `${owner}/${repo}@${ref}`;
@@ -60,14 +86,9 @@ export async function resolveCommitSha(owner, repo, ref = "main", options = {}) 
         }
         // Fall back to Git transport when the GitHub API is rate-limited.
     }
-    options.budget?.take();
     const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
     const refs = ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
-    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, ...refs], {
-        timeout: 40000,
-        shell: false,
-        windowsHide: true
-    });
+    const { stdout } = await runGitCommand(["ls-remote", validated.cloneUrl, ...refs], options);
     const match = stdout.split(/\r?\n/)
         .map(line => line.trim().split(/\s+/))
         .find(parts => parts.length === 2 && /^[a-f0-9]{40}$/i.test(parts[0]))?.[0];
@@ -78,25 +99,18 @@ export async function resolveCommitSha(owner, repo, ref = "main", options = {}) 
 }
 
 export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null, options = {}) {
-    options.budget?.take();
     const validated = parseAndValidateGitHubUrl(cloneUrl);
     if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
         throw new Error("A resolved 40-character commit SHA is required before Git transport can fetch repository content.");
     }
     const commitSha = ref.toLowerCase();
     const gitOptions = ["-c", "protocol.version=2", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"];
-    const commandOptions = {
-        timeout: 40000,
-        shell: false,
-        windowsHide: true
-    };
+    await runGitCommand([...gitOptions, "init", "--quiet", targetDir], options);
+    await runGitCommand([...gitOptions, "-C", targetDir, "remote", "add", "origin", validated.cloneUrl], options);
+    await runGitCommand([...gitOptions, "-C", targetDir, "fetch", "--depth=1", "--no-tags", "origin", commitSha], options);
+    await runGitCommand([...gitOptions, "-C", targetDir, "checkout", "--detach", "--quiet", "FETCH_HEAD"], options);
 
-    await execFileAsync("git", [...gitOptions, "init", "--quiet", targetDir], commandOptions);
-    await execFileAsync("git", [...gitOptions, "-C", targetDir, "remote", "add", "origin", validated.cloneUrl], commandOptions);
-    await execFileAsync("git", [...gitOptions, "-C", targetDir, "fetch", "--depth=1", "--no-tags", "origin", commitSha], commandOptions);
-    await execFileAsync("git", [...gitOptions, "-C", targetDir, "checkout", "--detach", "--quiet", "FETCH_HEAD"], commandOptions);
-
-    const { stdout } = await execFileAsync("git", ["-C", targetDir, "rev-parse", "HEAD"], commandOptions);
+    const { stdout } = await runGitCommand(["-C", targetDir, "rev-parse", "HEAD"], options);
     if (stdout.trim().toLowerCase() !== commitSha) {
         throw new Error(`Pinned Git checkout mismatch: expected '${commitSha}', got '${stdout.trim().toLowerCase()}'.`);
     }
@@ -111,11 +125,7 @@ export async function cloneAndReadRepo(repoUrl, targetRevision = null, options =
         await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha, options);
 
         // Extract exact HEAD commit SHA
-        const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
-            cwd: tempDir,
-            shell: false,
-            windowsHide: true
-        });
+        const { stdout } = await runGitCommand(["-C", tempDir, "rev-parse", "HEAD"], options);
         const sourceRevision = stdout.trim().toLowerCase();
 
         const filesMap = {};
