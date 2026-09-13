@@ -1,4 +1,6 @@
 ﻿import { joinSession } from "@github/copilot-sdk/extension";
+import fs from "node:fs/promises";
+import { createSkillShortlistCanvas } from "./skill-shortlist-canvas.mjs";
 import {
     loadConfig,
     saveConfig,
@@ -21,7 +23,11 @@ import { vetFilesMap } from "./lib/vetting.mjs";
 import { reviewSkill, toSkillCard } from "./lib/review.mjs";
 import { installSkillAtomic } from "./lib/installer.mjs";
 
-const session = await joinSession({
+let session;
+session = await joinSession({
+    canvases: [createSkillShortlistCanvas({
+        send: options => session.send(options)
+    })],
     tools: [
         {
             name: "skill_explorer_search",
@@ -154,7 +160,18 @@ const session = await joinSession({
                             widgetType: "inbox",
                             title: `Skills matching "${q}"`,
                             items: results.map(toSkillCard),
-                            nextAction: "Render these cards, then ask the user which skill to vet. Do not install directly from search results."
+                            shortlistCanvas: {
+                                canvasId: "skill-shortlist",
+                                input: {
+                                    candidates: results.map(result => ({
+                                        name: result.name,
+                                        source: result.url,
+                                        description: result.description,
+                                        url: result.url
+                                    }))
+                                }
+                            },
+                            nextAction: "Render inbox cards, open the skill-shortlist canvas with shortlistCanvas.input, then ask the user which skill to vet. Do not install directly from search results."
                         }
                     }, null, 2);
                 } catch (err) {

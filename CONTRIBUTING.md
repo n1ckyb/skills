@@ -6,7 +6,8 @@ Thank you for your interest in contributing to `skill-explorer`!
 
 1. **No External Dependencies**: Use Node.js built-in modules (`node:fs/promises`, `node:path`, `node:crypto`, `node:child_process`, `node:https`, `node:test`, `node:assert`).
 2. **Code Structure**:
-   - `extensions/skill-explorer/extension.mjs`: Extension registration & tool handlers.
+   - `extensions/skill-explorer/extension.mjs`: Extension registration, tool handlers, and canvas wiring.
+   - `extensions/skill-explorer/skill-shortlist-canvas.mjs`: Interactive shortlist canvas renderer and request actions.
    - `extensions/skill-explorer/lib/`: Reusable runtime & vetting modules (`url.mjs`, `config.mjs`, `github.mjs`, `vetting.mjs`, `review.mjs`, `installer.mjs`).
    - `skills/skill-explorer/SKILL.md`: Declarative agent skill instructions.
    - `tests/`: Unit tests using `node:test`.
@@ -32,6 +33,9 @@ This repository follows the official Awesome GitHub Copilot contribution model:
   `extensions.com.github.copilot.logo: "assets/preview.png"` and a matching
   `assets/preview.png`.
 - Do not add `canvas.json`; plugin manifests provide extension website metadata.
+- Canvas controls must not bypass tool-level security gates. The shortlist
+  canvas may request vetting or installation, but the extension remains
+  responsible for revision, digest, risk-threshold, and confirmation checks.
 - Validate plugin manifests with the upstream repository's
   `npm run plugin:validate` when contributing this package there.
 - Run the local equivalents before submitting changes:
