@@ -41,9 +41,12 @@ function renderHtml(candidates) {
     const cards = candidates.map((candidate, index) => `
         <article class="card">
           <div class="card-heading">
-            <div>
+            <div class="identity">
+              <input class="select-candidate" type="checkbox" data-index="${index}" aria-label="Select ${escapeHtml(candidate.name)}">
+              <div>
               <h2>${escapeHtml(candidate.name)}</h2>
               <p class="source">${escapeHtml(candidate.source)}</p>
+              </div>
             </div>
             <span class="badge">${escapeHtml(candidate.trustTier)}</span>
           </div>
@@ -66,22 +69,38 @@ function renderHtml(candidates) {
 body { margin: 0; padding: 20px; background: var(--background-color-default, #fff); color: var(--text-color-default, #1f2328); font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); font-size: var(--text-body-medium, 14px); line-height: var(--leading-body-medium, 20px); }
 .header { margin-bottom: 20px; } h1 { margin: 0 0 4px; font-size: 22px; line-height: 28px; font-weight: var(--font-weight-semibold, 600); } .intro { color: var(--text-color-muted, #57606a); margin: 0; }
 .card { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 8px; margin: 12px 0; padding: 16px; background: var(--background-color-default, #fff); }
-.card-heading, .card-footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; } h2 { font-size: 16px; line-height: 22px; margin: 0; font-weight: var(--font-weight-semibold, 600); } .description { margin: 12px 0 16px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0 4px; } .selection-count { color: var(--text-color-muted, #57606a); font-size: 12px; } .identity { display: flex; align-items: flex-start; gap: 10px; } input[type="checkbox"] { accent-color: var(--true-color-blue, #0969da); margin-top: 4px; } .card-heading, .card-footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; } h2 { font-size: 16px; line-height: 22px; margin: 0; font-weight: var(--font-weight-semibold, 600); } .description { margin: 12px 0 16px; }
 .source { color: var(--text-color-muted, #57606a); margin: 2px 0 0; font-size: 12px; } .badge, .status { white-space: nowrap; font-size: 12px; } .badge { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; padding: 2px 8px; color: var(--text-color-muted, #57606a); } .status { color: var(--text-color-muted, #57606a); } .status-dot { display: inline-block; width: 7px; height: 7px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--true-color-yellow, #bf8700); }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .button { display: inline-block; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; color: inherit; cursor: pointer; padding: 5px 10px; font: inherit; font-size: 12px; text-decoration: none; } .button-subtle { background: var(--background-color-default, #fff); } .button-primary { background: var(--true-color-blue, #0969da); border-color: var(--true-color-blue, #0969da); color: var(--color-white, #fff); } .button:focus-visible { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 2px; }
 #status { color: var(--text-color-muted, #57606a); min-height: 20px; margin: 16px 0 0; } @media (max-width: 640px) { .card-heading, .card-footer { flex-direction: column; } .actions { justify-content: flex-start; } }
 </style></head>
-<body><header class="header"><h1>Skill shortlist</h1><p class="intro">Review candidates before asking for details, security vetting, or installation. Installation always requires explicit confirmation.</p></header>${cards}<p id="status" role="status" aria-live="polite"></p>
+<body><header class="header"><h1>Skill shortlist</h1><p class="intro">Review candidates before asking for details, security vetting, or installation. Installation always requires explicit confirmation.</p><div class="toolbar"><span class="selection-count" id="selection-count">0 selected</span><div class="actions"><button class="button button-subtle" id="select-all" type="button">Select all</button><button class="button button-subtle" id="clear-selection" type="button">Clear</button><button class="button button-primary" id="install-selected" type="button" disabled>Install selected</button></div></div></header>${cards}<p id="status" role="status" aria-live="polite"></p>
 <script>
+const checkboxes = [...document.querySelectorAll(".select-candidate")];
+const selectionCount = document.getElementById("selection-count");
+const installSelected = document.getElementById("install-selected");
+function updateSelection() {
+  const selected = checkboxes.filter(input => input.checked);
+  selectionCount.textContent = selected.length + " selected";
+  installSelected.disabled = selected.length === 0;
+}
+checkboxes.forEach(input => input.addEventListener("change", updateSelection));
+document.getElementById("select-all").addEventListener("click", () => { checkboxes.forEach(input => { input.checked = true; }); updateSelection(); });
+document.getElementById("clear-selection").addEventListener("click", () => { checkboxes.forEach(input => { input.checked = false; }); updateSelection(); });
+installSelected.addEventListener("click", () => sendBulkRequest("install", checkboxes.filter(input => input.checked).map(input => Number(input.dataset.index))));
 document.querySelectorAll("button[data-action]").forEach(button => button.addEventListener("click", async () => {
   button.disabled = true;
+  await sendBulkRequest(button.dataset.action, [Number(button.dataset.index)], button);
+}));
+async function sendBulkRequest(action, indexes, button) {
   const status = document.getElementById("status"); status.textContent = "Sending request...";
   try {
-    const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: button.dataset.action, index: Number(button.dataset.index) }) });
+    const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, indexes }) });
     if (!response.ok) throw new Error(await response.text());
-    status.textContent = "Request sent to the agent.";
-  } catch (error) { status.textContent = "Request failed: " + error.message; button.disabled = false; }
-}));</script></body></html>`;
+    status.textContent = action === "install" && indexes.length > 1 ? "Install request sent for selected skills." : "Request sent to the agent.";
+  } catch (error) { status.textContent = "Request failed: " + error.message; if (button) button.disabled = false; }
+}
+updateSelection();</script></body></html>`;
 }
 
 async function readJson(req) {
@@ -113,7 +132,7 @@ export function createSkillShortlistCanvas(session) {
                 properties: { candidate: { type: "object" } },
                 required: ["candidate"]
             },
-            handler: async ctx => requestAction(session, action, ctx.input.candidate)
+            handler: async ctx => requestAction(session, action, [ctx.input.candidate])
         })),
         open: async ctx => {
             const candidates = validateCandidates(ctx.input);
@@ -134,15 +153,16 @@ export function createSkillShortlistCanvas(session) {
     });
 }
 
-async function requestAction(session, action, candidate) {
-    const safeCandidate = validateCandidates({ candidates: [candidate] })[0];
+async function requestAction(session, action, candidates) {
+    const safeCandidates = validateCandidates({ candidates });
+    const list = safeCandidates.map(candidate => `- '${candidate.name}' from '${candidate.source}'`).join("\n");
     const prompt = action === "details"
-        ? `Provide source details for shortlisted skill '${safeCandidate.name}' from '${safeCandidate.source}'. Do not install it.`
+        ? `Provide source details for these shortlisted skills:\n${list}\nDo not install them.`
         : action === "vet"
-            ? `Security-vet shortlisted skill '${safeCandidate.name}' from '${safeCandidate.source}' using skill_explorer_vet. Report its exact revision, digest, risk score, findings, and verdict. Do not install it.`
-            : `The user requested installation of shortlisted skill '${safeCandidate.name}' from '${safeCandidate.source}'. First run skill_explorer_vet, show the exact revision, digest, risk result, and scope, then request explicit confirmation before calling skill_explorer_install.`;
+            ? `Security-vet these shortlisted skills using skill_explorer_vet:\n${list}\nReport each exact revision, digest, risk score, findings, and verdict. Do not install them.`
+            : `The user requested installation of these shortlisted skills:\n${list}\nFirst run skill_explorer_vet for each, show each exact revision, digest, risk result, and scope, then request one explicit confirmation covering only the skills that pass policy before calling skill_explorer_install.`;
     await session.send({ prompt });
-    return { candidate: safeCandidate.name, action, status: "request_sent" };
+    return { candidates: safeCandidates.map(candidate => candidate.name), action, status: "request_sent" };
 }
 
 async function startServer(session, candidates) {
@@ -155,10 +175,11 @@ async function startServer(session, candidates) {
         if (req.method === "POST" && req.url === "/action") {
             try {
                 const body = await readJson(req);
-                if (!["details", "vet", "install"].includes(body.action) || !Number.isInteger(body.index) || !candidates[body.index]) {
+                const indexes = Array.isArray(body.indexes) ? body.indexes : [];
+                if (!["details", "vet", "install"].includes(body.action) || indexes.length === 0 || indexes.length > 50 || indexes.some(index => !Number.isInteger(index) || !candidates[index])) {
                     throw new Error("Invalid shortlist action.");
                 }
-                await requestAction(session, body.action, candidates[body.index]);
+                await requestAction(session, body.action, indexes.map(index => candidates[index]));
                 res.writeHead(204).end();
             } catch (error) {
                 res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end(error.message);
