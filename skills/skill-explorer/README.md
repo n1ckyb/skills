@@ -159,6 +159,16 @@ View or update user configurations.
 }
 ```
 
+### `gh skills install` compatibility wrapper
+
+For terminal users, the repository includes a guarded compatibility wrapper:
+
+```powershell
+node scripts/gh-skills.mjs install github/awesome-copilot diagnose --scope user
+```
+
+The wrapper is not a bypass. It resolves the exact `skills/<name>/` folder, displays the immutable revision, digest, risk score, and findings, requires typing `yes`, and then uses the same atomic installer and verification checks as `skill_explorer_install`.
+
 ---
 
 ## Configuration
