@@ -4,7 +4,7 @@ import os from "node:os";
 
 export const CONFIG_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-config.json");
 export const INSTALLED_REGISTRY_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-installed.json");
-export const OPERATION_STATE_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-operation-state.json");
+export const OPERATION_STATE_PATH = path.join(os.homedir(), ".copilot", "skill-explorer-operation-state.jsonl");
 export const CANONICAL_SKILLS_REPO = "github/awesome-copilot";
 export const CANONICAL_SKILLS_ROOT = "skills";
 export const CANONICAL_SKILLS_SITE = "https://awesome-copilot.github.com/skills/";
@@ -40,8 +40,8 @@ export async function loadConfig(targetConfigPath = CONFIG_PATH) {
         if (err.code === "ENOENT") {
             try {
                 await saveConfig(DEFAULT_CONFIG, targetConfigPath);
-            } catch {
-                // Return default config even if writing default file fails
+            } catch (saveErr) {
+                console.warn(`[WARNING] Failed to save default configuration to '${targetConfigPath}': ${saveErr.message}`);
             }
             return { ...DEFAULT_CONFIG };
         }
@@ -83,15 +83,32 @@ export async function saveInstalledRecord(record, registryPath = INSTALLED_REGIS
 }
 
 export async function recordOperationState(operation, state, statePath = OPERATION_STATE_PATH) {
-    let history = [];
+    const entry = { operation, ...state, recordedAt: new Date().toISOString() };
+    const line = `${JSON.stringify(entry)}\n`;
     try {
-        history = JSON.parse(await fs.readFile(statePath, "utf8"));
-        if (!Array.isArray(history)) history = [];
+        await fs.mkdir(path.dirname(statePath), { recursive: true });
+        await fs.appendFile(statePath, line, "utf8");
+        return entry;
     } catch (err) {
-        if (err.code !== "ENOENT") history = [];
+        throw new Error(`Failed to record operation state in '${statePath}': ${err.message}`);
     }
-    history.push({ operation, ...state, recordedAt: new Date().toISOString() });
-    await fs.mkdir(path.dirname(statePath), { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify(history.slice(-100), null, 2), "utf8");
-    return history.at(-1);
+}
+
+export async function loadOperationState(statePath = OPERATION_STATE_PATH) {
+    try {
+        const content = await fs.readFile(statePath, "utf8");
+        const trimmed = content.trim();
+        if (!trimmed) return [];
+        if (trimmed.startsWith("[")) {
+            const parsed = JSON.parse(trimmed);
+            return Array.isArray(parsed) ? parsed : [];
+        }
+        return trimmed
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map(line => JSON.parse(line));
+    } catch (err) {
+        if (err.code === "ENOENT") return [];
+        throw new Error(`Failed to load operation state from '${statePath}': ${err.message}`);
+    }
 }

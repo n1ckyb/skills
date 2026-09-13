@@ -30,13 +30,13 @@ const revisionCache = new Map();
 const REVISION_CACHE_TTL = 5 * 60 * 1000;
 const REVISION_CACHE_MAX = 128;
 
-export async function resolveCommitSha(owner, repo, ref = "main") {
+export async function resolveCommitSha(owner, repo, ref = "main", options = {}) {
     if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
     const cacheKey = `${owner}/${repo}@${ref}`;
     const cached = revisionCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.sha;
     try {
-        const data = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`);
+        const data = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`, options);
         if (data.sha && /^[a-f0-9]{40}$/i.test(data.sha)) {
                 const sha = data.sha.toLowerCase();
                 revisionCache.set(cacheKey, { sha, expiresAt: Date.now() + REVISION_CACHE_TTL });
@@ -47,16 +47,20 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
         // Fallback to commit object if direct sha is nested
     }
     try {
-        const commitData = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`);
+        const commitData = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1&sha=${encodeURIComponent(ref)}`, options);
         if (Array.isArray(commitData) && commitData[0]?.sha) {
             const sha = commitData[0].sha.toLowerCase();
             revisionCache.set(cacheKey, { sha, expiresAt: Date.now() + REVISION_CACHE_TTL });
             while (revisionCache.size > REVISION_CACHE_MAX) revisionCache.delete(revisionCache.keys().next().value);
             return sha;
         }
-    } catch {
+    } catch (err) {
+        if (err?.message?.includes("budget") || err?.message?.includes("deadline")) {
+            throw err;
+        }
         // Fall back to Git transport when the GitHub API is rate-limited.
     }
+    options.budget?.take();
     const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
     const refs = ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
     const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, ...refs], {
@@ -73,7 +77,8 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
     throw new Error(`Unable to resolve 40-character commit SHA for ${owner}/${repo} at ref '${ref}'`);
 }
 
-export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null) {
+export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null, options = {}) {
+    options.budget?.take();
     const validated = parseAndValidateGitHubUrl(cloneUrl);
     if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
         throw new Error("A resolved 40-character commit SHA is required before Git transport can fetch repository content.");
@@ -98,12 +103,12 @@ export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null) {
     return commitSha;
 }
 
-export async function cloneAndReadRepo(repoUrl, targetRevision = null) {
+export async function cloneAndReadRepo(repoUrl, targetRevision = null, options = {}) {
     const validated = parseAndValidateGitHubUrl(repoUrl);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-vet-"));
     try {
-        const commitSha = targetRevision || await resolveCommitSha(validated.owner, validated.repo, "HEAD");
-        await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
+        const commitSha = targetRevision || await resolveCommitSha(validated.owner, validated.repo, "HEAD", options);
+        await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha, options);
 
         // Extract exact HEAD commit SHA
         const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
@@ -150,11 +155,11 @@ export async function cloneAndReadRepo(repoUrl, targetRevision = null) {
     }
 }
 
-export async function readCanonicalSkill(slug, targetRevision = null) {
+export async function readCanonicalSkill(slug, targetRevision = null, options = {}) {
     const [owner, repo] = CANONICAL_SKILLS_REPO.split("/");
-    const commitSha = targetRevision || await resolveCommitSha(owner, repo, "main");
+    const commitSha = targetRevision || await resolveCommitSha(owner, repo, "main", options);
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`;
-    const data = await fetchJson(treeUrl);
+    const data = await fetchJson(treeUrl, options);
 
     const prefix = `${CANONICAL_SKILLS_ROOT}/${slug}/`;
     const treeItems = (data.tree || []).filter(item =>
@@ -172,7 +177,7 @@ export async function readCanonicalSkill(slug, targetRevision = null) {
             throw new Error(`Unsafe relative path '${relativePath}' in canonical skill`);
         }
         const rawUrl = `https://raw.githubusercontent.com/${CANONICAL_SKILLS_REPO}/${commitSha}/${item.path}`;
-        const contentText = await fetchText(rawUrl);
+        const contentText = await fetchText(rawUrl, options);
         filesMap[relativePath] = Buffer.from(contentText, "utf8");
     }));
 
@@ -382,15 +387,15 @@ export async function searchSkillsDirectory(query, config, options = {}) {
     return output;
 }
 
-export async function readGitHubSkillFolder({ owner, repo, ref, folder }, targetRevision = null) {
-    const commitSha = targetRevision || await resolveCommitSha(owner, repo, ref || "main");
+export async function readGitHubSkillFolder({ owner, repo, ref, folder }, targetRevision = null, options = {}) {
+    const commitSha = targetRevision || await resolveCommitSha(owner, repo, ref || "main", options);
     const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`;
     let data;
     try {
-        data = await fetchJson(treeUrl);
+        data = await fetchJson(treeUrl, options);
     } catch (error) {
         if (!/HTTP 403|HTTP 429/i.test(error.message)) throw error;
-        return readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha);
+        return readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha, options);
     }
     const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
     const prefix = `${normalizedFolder}/`;
@@ -403,11 +408,11 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
         throw new Error(`GitHub folder '${owner}/${repo}/${normalizedFolder}' does not contain SKILL.md`);
     }
 
-    async function readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha) {
+    async function readGitHubSkillFolderFromClone({ owner, repo, folder }, commitSha, options = {}) {
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-folder-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha, options);
             const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
             const folderDir = path.join(tempDir, ...normalizedFolder.split("/"));
             const filesMap = {};
@@ -448,7 +453,7 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
             throw new Error(`Unsafe relative path '${relativePath}' in GitHub skill folder`);
         }
         const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${commitSha}/${item.path}`;
-        const contentText = await fetchText(rawUrl);
+        const contentText = await fetchText(rawUrl, options);
         filesMap[relativePath] = Buffer.from(contentText, "utf8");
     }));
 
@@ -465,16 +470,17 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
     };
 }
 
-export async function readRegistrySkill({ owner, repo, slug }, targetRevision = null) {
-    const commitSha = targetRevision || await resolveCommitSha(owner, repo, "main");
+export async function readRegistrySkill({ owner, repo, slug }, targetRevision = null, options = {}) {
+    const commitSha = targetRevision || await resolveCommitSha(owner, repo, "main", options);
     let data;
     try {
         data = await fetchJson(
-            `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`
+            `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`,
+            options
         );
     } catch (error) {
         if (!/HTTP 403|HTTP 429/i.test(error.message)) throw error;
-        return readRegistrySkillFromClone({ owner, repo, slug }, commitSha);
+        return readRegistrySkillFromClone({ owner, repo, slug }, commitSha, options);
     }
 
     const suffix = `/${slug}/SKILL.md`.toLowerCase();
@@ -493,11 +499,11 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
         throw new Error(`Could not locate the '${slug}' SKILL.md in ${owner}/${repo}`);
     }
 
-    async function readRegistrySkillFromClone({ owner, repo, slug }, commitSha) {
+    async function readRegistrySkillFromClone({ owner, repo, slug }, commitSha, options = {}) {
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-registry-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha, options);
             const matches = [];
             async function findSkillFiles(dir, relative = "") {
                 const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -558,27 +564,31 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
     const skillFile = candidates[0].path;
     const folder = skillFile.slice(0, -"/SKILL.md".length);
 
-    const result = await readGitHubSkillFolder({ owner, repo, ref: commitSha, folder }, commitSha);
+    const result = await readGitHubSkillFolder({ owner, repo, ref: commitSha, folder }, commitSha, options);
     return {
         ...result,
         provenance: "skills-registry"
     };
 }
 
-export async function readSkillSource(repoOrUrl, targetRevision = null) {
+export async function readSkillSource(repoOrUrl, targetRevision = null, options = {}) {
+    if (targetRevision && typeof targetRevision === "object" && typeof options === "object" && Object.keys(options).length === 0) {
+        options = targetRevision;
+        targetRevision = null;
+    }
     const canonicalSlug = getCanonicalSkillSlug(repoOrUrl);
     if (canonicalSlug) {
-        return readCanonicalSkill(canonicalSlug, targetRevision);
+        return readCanonicalSkill(canonicalSlug, targetRevision, options);
     }
 
     const registrySkill = parseSkillsRegistryUrl(repoOrUrl);
     if (registrySkill) {
-        return readRegistrySkill(registrySkill, targetRevision);
+        return readRegistrySkill(registrySkill, targetRevision, options);
     }
 
     const githubFolder = parseGitHubTreeUrl(repoOrUrl);
     if (githubFolder) {
-        return readGitHubSkillFolder(githubFolder, targetRevision);
+        return readGitHubSkillFolder(githubFolder, targetRevision, options);
     }
 
     const shorthandFolder = parseGitHubFolderSpec(repoOrUrl);
@@ -589,15 +599,15 @@ export async function readSkillSource(repoOrUrl, targetRevision = null) {
                 owner: shorthandFolder.owner,
                 repo: shorthandFolder.repo,
                 slug: parts[2]
-            }, targetRevision);
+            }, targetRevision, options);
         }
         return readGitHubSkillFolder({
             ...shorthandFolder,
             ref: "main"
-        }, targetRevision);
+        }, targetRevision, options);
     }
 
-    const cloneResult = await cloneAndReadRepo(repoOrUrl, targetRevision);
+    const cloneResult = await cloneAndReadRepo(repoOrUrl, targetRevision, options);
     return {
         ...cloneResult,
         skillName: null,

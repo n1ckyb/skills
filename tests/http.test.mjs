@@ -86,3 +86,30 @@ test("request helper rejects insecure redirects", async () => {
         await assert.rejects(fetchText("https://example.test", { maxRedirects: 1 }), /redirect must use HTTPS/i);
     } finally { https.get = original; }
 });
+test("request helper is idempotent and destroys response stream on size overflow", async () => {
+    const original = https.get;
+    let destroyed = false;
+    https.get = (url, options, callback) => {
+        const req = new EventEmitter();
+        req.destroy = () => {};
+        const res = new EventEmitter();
+        res.statusCode = 200;
+        res.headers = {};
+        res.destroy = () => { destroyed = true; };
+        res.resume = () => {};
+        queueMicrotask(() => {
+            callback(res);
+            res.emit("data", Buffer.from("01234"));
+            res.emit("data", Buffer.from("56789"));
+            res.emit("data", Buffer.from("late"));
+            res.emit("end");
+            res.emit("error", new Error("late error"));
+            req.emit("error", new Error("late req error"));
+        });
+        return req;
+    };
+    try {
+        await assert.rejects(fetchText("https://example.test", { maxBytes: 4 }), /exceeds maximum size/);
+        assert.equal(destroyed, true);
+    } finally { https.get = original; }
+});

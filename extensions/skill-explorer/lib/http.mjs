@@ -31,53 +31,98 @@ export function requestText(url, options = {}) {
     const budget = config.budget;
     const request = (target, redirects) => new Promise((resolve, reject) => {
         try { budget?.take(); } catch (error) { reject(error); return; }
+
+        let settled = false;
+        let timer = null;
+        let req = null;
+        let res = null;
+
+        const cleanup = () => {
+            if (timer !== null) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        };
+
+        const settleReject = (err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (res) res.destroy?.();
+            if (req) req.destroy?.();
+            reject(err);
+        };
+
+        const settleResolve = (val) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(val);
+        };
+
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), Math.min(config.timeoutMs, Math.max(1, (budget?.deadline || Infinity) - Date.now())));
-        const req = https.get(target, {
+        const remainingTime = Math.min(config.timeoutMs, Math.max(1, (budget?.deadline || Infinity) - Date.now()));
+        timer = setTimeout(() => {
+            controller.abort();
+        }, remainingTime);
+
+        req = https.get(target, {
             headers: config.headers,
             signal: controller.signal
-        }, res => {
+        }, responseStream => {
+            res = responseStream;
+            if (settled) {
+                res.destroy?.();
+                return;
+            }
             const location = res.headers.location;
             if (res.statusCode >= 300 && res.statusCode < 400 && location) {
                 res.resume();
-                clearTimeout(timer);
+                cleanup();
                 const redirectUrl = new URL(location, target);
                 if (redirectUrl.protocol !== "https:") {
-                    reject(new Error(`HTTP redirect must use HTTPS: ${redirectUrl.protocol}`));
+                    settleReject(new Error(`HTTP redirect must use HTTPS: ${redirectUrl.protocol}`));
                     return;
                 }
                 if (redirects >= config.maxRedirects) {
-                    reject(new Error(`HTTP redirect limit exceeded (${config.maxRedirects})`));
+                    settleReject(new Error(`HTTP redirect limit exceeded (${config.maxRedirects})`));
                     return;
                 }
+                settled = true;
                 request(redirectUrl.toString(), redirects + 1).then(resolve, reject);
                 return;
             }
             let size = 0;
             const chunks = [];
             res.on("data", chunk => {
+                if (settled) return;
                 size += chunk.length;
                 if (size > config.maxBytes) {
-                    req.destroy?.();
-                    reject(new Error(`HTTP response exceeds maximum size (${config.maxBytes} bytes)`));
+                    settleReject(new Error(`HTTP response exceeds maximum size (${config.maxBytes} bytes)`));
                     return;
                 }
                 chunks.push(chunk);
             });
             res.on("end", () => {
-                clearTimeout(timer);
+                if (settled) return;
                 const body = Buffer.concat(chunks).toString("utf8");
                 if (res.statusCode < 200 || res.statusCode >= 300) {
                     const error = new Error(`HTTP ${res.statusCode}: ${body.slice(0, 200)}`);
                     error.statusCode = res.statusCode;
-                    reject(error);
-                } else resolve(body);
+                    settleReject(error);
+                } else {
+                    settleResolve(body);
+                }
             });
-            res.on("error", error => { clearTimeout(timer); reject(error); });
+            res.on("error", error => {
+                settleReject(error);
+            });
         });
+
         req.on("error", error => {
-            clearTimeout(timer);
-            reject(error.name === "AbortError" ? new Error(`HTTP request timed out after ${config.timeoutMs}ms`) : error);
+            if (settled) return;
+            const err = error.name === "AbortError" ? new Error(`HTTP request timed out after ${config.timeoutMs}ms`) : error;
+            settleReject(err);
         });
     });
     return request(url, 0);
