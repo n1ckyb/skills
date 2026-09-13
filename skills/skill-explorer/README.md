@@ -196,11 +196,17 @@ counts, while the full diagnostics remain in local operation state. If a receipt
 cannot be persisted, the operation reports an `observabilityWarning` rather than
 silently claiming complete observability.
 
-All search, trending, vet, install, and sync results share an operation envelope:
-`operation`, `complete`, `counters`, bounded diagnostics, `warnings`,
-`budgetExhausted`, and `operationReceipt`; existing operation-specific fields remain
-available. Run `npm run diagnostics` in this repository to inspect local duration,
-budget exhaustion, source availability, state compaction, and fallback frequency.
+All search, trending, vet, install, sync, configure, failure, and confirmation results share a
+standardized operation envelope (`schemaVersion: "1.0.0"`): `operation`, `schemaVersion`, `complete`,
+`degraded`, `counters`, bounded diagnostics (`sourceErrors`, `attemptedSources`, `diagnosticCounts`),
+`warnings`, `budgetExhausted`, `operationReceipt`, and `deprecationGuidance`. Legacy operation-specific
+fields (`searchQuery`, `totalCount`, `canonicalSource`, `secondarySource`, `directorySource`, `priorityOrdering`,
+`source`, `period`, `rankingNote`, `findingsCount`, `recommendation`) are preserved for backwards
+compatibility with clear migration mappings in `deprecationGuidance`.
+
+Run `npm run diagnostics` in this repository to inspect local duration, budget exhaustion,
+source availability, state compaction, fallback frequency, and automated threshold alerts (for rising
+budget exhaustion, high source failure rates, Git fallback usage, or state compaction drops).
 This report reads local JSONL state only and sends no telemetry.
 
 ---

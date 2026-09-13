@@ -230,20 +230,30 @@ session = await joinSession({
                         }
                     };
                     let observabilityWarning;
-                    let operationReceipt;
                     try {
-                        const state = await recordOperationState("search", { attemptedSources, sourceErrors, resultCount: results.length, complete: response.complete, counters: budget.snapshot(), durationMs: budget.snapshot().elapsedMs, budgetExhausted: false });
-                        operationReceipt = { operation: "search", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
+                        const state = await recordOperationState("search", {
+                            attemptedSources,
+                            sourceErrors,
+                            resultCount: results.length,
+                            complete,
+                            counters: budget.snapshot(),
+                            durationMs: budget.snapshot().elapsedMs,
+                            budgetExhausted: false
+                        });
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
                         await session.log(`[WARNING] ${observabilityWarning}`);
                     }
-                    if (operationReceipt) response.operationReceipt = operationReceipt;
-                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(createOperationResponse({
-                        operation: "search", result: response, sourceErrors, attemptedSources,
-                        counters: budget.snapshot(), resultCount: results.length
+                        operation: "search",
+                        result: response,
+                        complete,
+                        sourceErrors,
+                        attemptedSources,
+                        warnings: observabilityWarning ? [observabilityWarning] : [],
+                        counters: budget.snapshot(),
+                        resultCount: results.length
                     }), null, 2);
                 } catch (err) {
                     let observabilityWarning;
@@ -295,15 +305,18 @@ session = await joinSession({
                 const results = synchronized.results;
                 const sourceErrors = synchronized.sourceErrors;
                 const attemptedSources = [SKILLS_DIRECTORY_SITE, ...synchronized.attemptedSources];
+                    const complete = sourceErrors.length === 0 && synchronized.complete !== false;
                     let observabilityWarning;
-                    let operationReceipt;
                     try {
                         const state = await recordOperationState("trending", {
                             attemptedSources,
                             sourceErrors,
-                            resultCount: results.length, complete: sourceErrors.length === 0 && synchronized.complete !== false, counters: budget.snapshot(), durationMs: budget.snapshot().elapsedMs, budgetExhausted: false
+                            resultCount: results.length,
+                            complete,
+                            counters: budget.snapshot(),
+                            durationMs: budget.snapshot().elapsedMs,
+                            budgetExhausted: false
                         });
-                        operationReceipt = { operation: "trending", resultCount: results.length, ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
                         if (state.observabilityWarning) observabilityWarning = state.observabilityWarning;
                     } catch (recErr) {
                         observabilityWarning = `Failed to persist operation state: ${recErr.message}`;
@@ -331,8 +344,6 @@ session = await joinSession({
                         period,
                         rankingNote: "Trend rank comes from skills.sh. Source priority is displayed separately and does not replace trend rank.",
                         totalCount: results.length,
-                        complete,
-                        degraded: sourceErrors.length > 0,
                         results,
                         chatUx: {
                             widgetType: "inbox",
@@ -341,12 +352,15 @@ session = await joinSession({
                             nextAction: "Render these cards, then ask which skill to vet. Trending status never bypasses vetting."
                         }
                     };
-                    operationReceipt = { operation: "trending", resultCount: results.length, complete: response.complete, ...budget.snapshot(), ...createBoundedDiagnostics({ sourceErrors, attemptedSources }) };
-                    if (operationReceipt) response.operationReceipt = operationReceipt;
-                    if (observabilityWarning) response.observabilityWarning = observabilityWarning;
                     return JSON.stringify(createOperationResponse({
-                        operation: "trending", result: response, sourceErrors, attemptedSources,
-                        counters: budget.snapshot(), resultCount: results.length
+                        operation: "trending",
+                        result: response,
+                        complete,
+                        sourceErrors,
+                        attemptedSources,
+                        warnings: observabilityWarning ? [observabilityWarning] : [],
+                        counters: budget.snapshot(),
+                        resultCount: results.length
                     }), null, 2);
                 } catch (err) {
                     let observabilityWarning;
@@ -569,45 +583,70 @@ session = await joinSession({
 
                 switch (args.action) {
                     case "view":
-                        return JSON.stringify({ configPath: CONFIG_PATH, config }, null, 2);
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { configPath: CONFIG_PATH, config },
+                            complete: true
+                        }), null, 2);
 
                     case "add_trusted_org":
-                        if (!args.value) return JSON.stringify({ error: "Value required for add_trusted_org" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for add_trusted_org")));
                         if (!config.trustedOrgs.map(o => o.toLowerCase()).includes(args.value.toLowerCase())) {
                             config.trustedOrgs.push(args.value.toLowerCase());
                             await saveConfig(config);
                         }
-                        return JSON.stringify({ message: `Added trusted org '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Added trusted org '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "remove_trusted_org":
-                        if (!args.value) return JSON.stringify({ error: "Value required for remove_trusted_org" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for remove_trusted_org")));
                         config.trustedOrgs = config.trustedOrgs.filter(o => o.toLowerCase() !== args.value.toLowerCase());
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Removed trusted org '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Removed trusted org '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "add_trusted_repo":
-                        if (!args.value) return JSON.stringify({ error: "Value required for add_trusted_repo" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for add_trusted_repo")));
                         if (!config.trustedRepos.map(r => r.toLowerCase()).includes(args.value.toLowerCase())) {
                             config.trustedRepos.push(args.value.toLowerCase());
                             await saveConfig(config);
                         }
-                        return JSON.stringify({ message: `Added trusted repo '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Added trusted repo '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
                     case "remove_trusted_repo":
-                        if (!args.value) return JSON.stringify({ error: "Value required for remove_trusted_repo" });
+                        if (!args.value) return JSON.stringify(operationFailure("configure", new Error("Value required for remove_trusted_repo")));
                         config.trustedRepos = config.trustedRepos.filter(r => r.toLowerCase() !== args.value.toLowerCase());
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Removed trusted repo '${args.value}'` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Removed trusted repo '${args.value}'` },
+                            complete: true
+                        }), null, 2);
 
-                    case "set_risk_threshold":
+                    case "set_risk_threshold": {
                         const val = parseInt(args.value, 10);
-                        if (isNaN(val) || val < 0 || val > 100) return JSON.stringify({ error: "Value must be a number between 0 and 100" });
+                        if (isNaN(val) || val < 0 || val > 100) return JSON.stringify(operationFailure("configure", new Error("Value must be a number between 0 and 100")));
                         config.maxRiskThreshold = val;
                         await saveConfig(config);
-                        return JSON.stringify({ message: `Updated risk threshold to ${val}` });
+                        return JSON.stringify(createOperationResponse({
+                            operation: "configure",
+                            result: { message: `Updated risk threshold to ${val}` },
+                            complete: true
+                        }), null, 2);
+                    }
 
                     default:
-                        return JSON.stringify({ error: "Invalid configuration action" });
+                        return JSON.stringify(operationFailure("configure", new Error("Invalid configuration action")));
                 }
             }
         }

@@ -23,6 +23,9 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Check Git Diff
+        run: git diff --check
+
       - name: Run Syntax Check
         run: npm run check
 
@@ -34,3 +37,6 @@ jobs:
 
       - name: Run Tests
         run: npm test
+
+      - name: Run Diagnostics
+        run: npm run diagnostics

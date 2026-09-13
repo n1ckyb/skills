@@ -1,4 +1,4 @@
-# n1ckyb/skills
+﻿# n1ckyb/skills
 
 Community skills and companion extensions for GitHub Copilot.
 
@@ -43,6 +43,7 @@ Requirements: Node.js 18 or newer, Git, and PowerShell for the optional installa
 ```bash
 npm run check
 npm test
+npm run diagnostics
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and security-testing guidance. See [`SECURITY.md`](SECURITY.md) to report vulnerabilities privately.
@@ -51,18 +52,24 @@ Discovery reports partial results explicitly when a source or synchronization ch
 unavailable (`complete: false`, `degraded`, `attemptedSources`, and `sourceErrors`);
 `complete: true` is emitted only when every attempted source and sync check succeeds.
 The same completion state is carried into shortlist cards. Network calls use bounded HTTPS requests,
-Per-operation budgets, bounded Git fallback transport, and bounded immutable revision
+per-operation budgets, bounded Git fallback transport, and bounded immutable revision
 caching. Operation receipts expose separate HTTP, Git command, child-process,
 filesystem-operation, request, and elapsed-time counters and are recorded as bounded JSONL in
 `~/.copilot/skill-explorer-operation-state.jsonl`.
 If persistence fails, the affected result includes an `observabilityWarning`.
 
-Search, trending, vet, install, and sync responses share one envelope with an
-`operation` identifier, `complete`, `counters`, bounded diagnostics, `warnings`,
-`budgetExhausted`, and `operationReceipt`, while retaining operation-specific fields.
+Search, trending, vet, install, sync, configure, failure, and confirmation responses share one
+standardized envelope (`schemaVersion: "1.0.0"`) with `operation`, `complete`, `degraded`,
+`counters`, bounded diagnostics (`sourceErrors`, `attemptedSources`, `diagnosticCounts`), `warnings`,
+`budgetExhausted`, `operationReceipt`, and `deprecationGuidance` for legacy operation-specific fields.
+Legacy fields (`searchQuery`, `totalCount`, `canonicalSource`, `secondarySource`, `directorySource`,
+`priorityOrdering`, `source`, `period`, `rankingNote`, `findingsCount`, `recommendation`) remain available
+for backward compatibility, with migration targets mapped in `deprecationGuidance`.
+
 Run `npm run diagnostics` to summarize local operation durations, exhausted budgets,
-source availability, state compaction, and fallback frequency. The report reads local
-JSONL state only and sends no telemetry.
+source availability, state compaction, fallback frequency, and automated threshold alerts (for rising
+budget exhaustion, high source failure rates, Git fallback usage, or state compaction drops).
+The diagnostic report reads local JSONL state only and sends no telemetry.
 
 ## License
 
