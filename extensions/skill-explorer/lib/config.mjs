@@ -58,28 +58,43 @@ export const DEFAULT_CONFIG = {
  * 5. Default origin ("production").
  *
  * @param {string} [explicitOrigin]
- * @returns {string}
+ * @returns {{ origin: string, source: "explicit"|"skill-explorer-environment"|"copilot-environment"|"node-environment"|"default", usedFallback: boolean, warning?: string }}
  */
-export function resolveRecordOrigin(explicitOrigin) {
+export function resolveRecordOriginMetadata(explicitOrigin) {
     if (explicitOrigin && typeof explicitOrigin === "string" && explicitOrigin.trim()) {
-        return explicitOrigin.trim().toLowerCase();
+        return { origin: explicitOrigin.trim().toLowerCase(), source: "explicit", usedFallback: false };
     }
     const envOrigin = process.env.SKILL_EXPLORER_ORIGIN || process.env.SKILL_EXPLORER_ENV;
     if (envOrigin && typeof envOrigin === "string" && envOrigin.trim()) {
-        return envOrigin.trim().toLowerCase();
+        return { origin: envOrigin.trim().toLowerCase(), source: "skill-explorer-environment", usedFallback: false };
     }
     const copilotEnv = process.env.COPILOT_ENVIRONMENT;
     if (copilotEnv && typeof copilotEnv === "string" && copilotEnv.trim()) {
-        return copilotEnv.trim().toLowerCase();
+        return { origin: copilotEnv.trim().toLowerCase(), source: "copilot-environment", usedFallback: false };
     }
     const nodeEnv = process.env.NODE_ENV;
     if (nodeEnv && typeof nodeEnv === "string") {
         const lower = nodeEnv.trim().toLowerCase();
-        if (lower === "test" || lower === "testing") return "test";
-        if (lower === "dev" || lower === "development") return "development";
-        if (lower === "prod" || lower === "production") return "production";
+        if (lower === "test" || lower === "testing") return { origin: "test", source: "node-environment", usedFallback: false };
+        if (lower === "dev" || lower === "development") return { origin: "development", source: "node-environment", usedFallback: false };
+        if (lower === "prod" || lower === "production") return { origin: "production", source: "node-environment", usedFallback: false };
     }
-    return DEFAULT_ORIGIN;
+    return {
+        origin: DEFAULT_ORIGIN,
+        source: "default",
+        usedFallback: true,
+        warning: "Telemetry origin was not configured; defaulting to production. Set SKILL_EXPLORER_ORIGIN explicitly."
+    };
+}
+
+/**
+ * Resolves the operation origin while retaining the established string-returning API.
+ *
+ * @param {string} [explicitOrigin]
+ * @returns {string}
+ */
+export function resolveRecordOrigin(explicitOrigin) {
+    return resolveRecordOriginMetadata(explicitOrigin).origin;
 }
 
 export async function loadConfig(targetConfigPath = CONFIG_PATH) {
@@ -181,12 +196,17 @@ export async function recordOperationState(
     retention = OPERATION_STATE_RETENTION,
     options = {}
 ) {
-    const origin = resolveRecordOrigin(state?.origin || state?.environment || options?.origin || options?.environment);
+    const originMetadata = resolveRecordOriginMetadata(
+        state?.origin || state?.environment || options?.origin || options?.environment
+    );
+    const origin = originMetadata.origin;
     const entry = {
         operation,
         ...state,
         origin,
         environment: origin,
+        originResolution: originMetadata,
+        ...(originMetadata.warning ? { observabilityWarning: originMetadata.warning } : {}),
         recordedAt: new Date().toISOString()
     };
     const line = `${JSON.stringify(entry)}\n`;
@@ -206,8 +226,12 @@ export async function recordOperationState(
             } else {
                 stateAppendCounts.set(statePath, appendCount);
             }
-            return droppedRecordCount > 0
-                ? { ...entry, droppedRecordCount, observabilityWarning: `Operation state retention dropped ${droppedRecordCount} older record(s).` }
+            const warnings = [
+                ...(originMetadata.warning ? [originMetadata.warning] : []),
+                ...(droppedRecordCount > 0 ? [`Operation state retention dropped ${droppedRecordCount} older record(s).`] : [])
+            ];
+            return warnings.length > 0
+                ? { ...entry, ...(droppedRecordCount > 0 ? { droppedRecordCount } : {}), observabilityWarning: warnings.join(" ") }
                 : entry;
         } catch (err) {
             throw new Error(`Failed to record operation state in '${statePath}': ${err.message}`);

@@ -8,12 +8,12 @@ Thank you for your interest in contributing to `skill-explorer`!
 2. **Code Structure**:
    - `extensions/skill-explorer/extension.mjs`: Extension registration, tool handlers, and canvas wiring.
    - `extensions/skill-explorer/skill-shortlist-canvas.mjs`: Interactive shortlist canvas renderer and request actions.
-   - `extensions/skill-explorer/lib/`: Reusable runtime & vetting modules (`url.mjs`, `config.mjs`, `github.mjs`, `vetting.mjs`, `review.mjs`, `installer.mjs`, `operation-response.mjs`, `diagnostics.mjs`).
+   - `extensions/skill-explorer/lib/`: Reusable runtime modules. Keep the handler layer thin: `config.mjs` owns local configuration and telemetry state; `github.mjs` owns bounded GitHub/Git transport; `vetting.mjs` owns static analysis and digesting; `installer.mjs` owns atomic filesystem changes; `installation-flow.mjs` composes the pinned vet/install gates; `operation-response.mjs` owns public envelopes; `diagnostics.mjs` reads telemetry summaries; `review.mjs`, `synchronization.mjs`, `http.mjs`, and `url.mjs` provide focused support functions.
    - `skills/skill-explorer/SKILL.md`: Declarative agent skill instructions.
    - `tests/`: Unit tests using `node:test`.
 3. **Response Schema Governance**:
    - Every public tool and operation must use `createOperationResponse` or `operationFailure`.
-   - Ad hoc response envelopes are strictly rejected by contract tests.
+   - The mandatory static contract test requires a one-to-one match between registered handlers and `SUPPORTED_OPERATIONS`, and rejects any handler JSON response that bypasses these factories. Run `npm run contract:validate` when changing public operations.
    - Follow the response schema migration policy documented in `operation-response.mjs`.
 4. **Testing & Diagnostics**: Run all validation steps before submitting changes:
    ```bash
@@ -21,9 +21,12 @@ Thank you for your interest in contributing to `skill-explorer`!
    npm run skill:validate
    npm run plugin:validate
    npm test
+   npm run contract:validate
+   npm run origin:validate
    npm run diagnostics
    ```
-5. **Security Focus**: Any change affecting URL parsing, git execution, file bounds, or vetting rules must include corresponding unit tests in `tests/`.
+5. **Telemetry Origins**: Configure `SKILL_EXPLORER_ORIGIN` explicitly as `production`, `development`, or `test` in CI, scripts, and harnesses. The production fallback remains safe for legacy callers but produces origin-resolution metadata and a warning.
+6. **Security Focus**: Any change affecting URL parsing, git execution, file bounds, or vetting rules must include corresponding unit tests in `tests/`. Vetting must retain all revision, digest, risk threshold, confirmation, and atomic-install gates; false-positive reductions need both benign and malicious regression coverage.
 
 ## Plugin and extension conventions
 

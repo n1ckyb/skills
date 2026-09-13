@@ -50,7 +50,7 @@ export function normalizeOriginFilter(origin) {
  * @param {Array<object>} [records=[]]
  * @param {string} [originFilter="all"]
  * @param {object} [options={}]
- * @returns {{ filteredRecords: Array<object>, origin: string, recordsByOrigin: { production: number, development: number, test: number, other: number } }}
+ * @returns {{ filteredRecords: Array<object>, origin: string, recordsByOrigin: { production: number, development: number, test: number, other: number }, fallbackOriginRecords: number }}
  */
 export function filterRecordsByOrigin(records = [], originFilter = DEFAULT_ORIGIN_FILTER, options = {}) {
     const normalized = normalizeOriginFilter(originFilter);
@@ -62,8 +62,12 @@ export function filterRecordsByOrigin(records = [], originFilter = DEFAULT_ORIGI
         test: 0,
         other: 0
     };
+    let fallbackOriginRecords = 0;
 
     for (const record of records) {
+        if (record.originResolution?.usedFallback || (!record.origin && !record.environment)) {
+            fallbackOriginRecords++;
+        }
         const recordOrigin = (record.origin || record.environment || defaultOriginForLegacy).toLowerCase();
         if (recordOrigin === "production" || recordOrigin === "prod") {
             recordsByOrigin.production++;
@@ -80,7 +84,8 @@ export function filterRecordsByOrigin(records = [], originFilter = DEFAULT_ORIGI
         return {
             filteredRecords: [...records],
             origin: "all",
-            recordsByOrigin
+            recordsByOrigin,
+            fallbackOriginRecords
         };
     }
 
@@ -95,7 +100,8 @@ export function filterRecordsByOrigin(records = [], originFilter = DEFAULT_ORIGI
     return {
         filteredRecords,
         origin: normalized,
-        recordsByOrigin
+        recordsByOrigin,
+        fallbackOriginRecords
     };
 }
 
@@ -214,10 +220,13 @@ export function createBoundedDiagnostics({ sourceErrors = [], attemptedSources =
 
 export function createOperationDiagnosticReport(records = [], options = {}) {
     const originOption = options.origin || DEFAULT_ORIGIN_FILTER;
-    const { filteredRecords: originFilteredRecords, origin: activeOrigin, recordsByOrigin } = filterRecordsByOrigin(records, originOption, options);
+    const { filteredRecords: originFilteredRecords, origin: activeOrigin, recordsByOrigin, fallbackOriginRecords } = filterRecordsByOrigin(records, originOption, options);
 
     const windowOption = options.window || DEFAULT_DIAGNOSTIC_WINDOW;
     const { filteredRecords, window: windowMeta } = filterRecordsByWindow(originFilteredRecords, windowOption, options);
+    const activeFallbackOriginRecords = filteredRecords.filter(record =>
+        record.originResolution?.usedFallback || (!record.origin && !record.environment)
+    ).length;
 
     const sourceAvailability = new Map();
     let totalDurationMs = 0;
@@ -281,6 +290,9 @@ export function createOperationDiagnosticReport(records = [], options = {}) {
     if (compactionDrops >= thresholds.compactionDroppedRecordsThreshold) {
         warnings.push(`State compaction alert: ${compactionDrops} record(s) dropped due to local operation-state retention bounds in ${scopeLabel}.`);
     }
+    if (activeFallbackOriginRecords > 0) {
+        warnings.push(`Origin configuration warning: ${activeFallbackOriginRecords} record(s) used the production fallback; configure SKILL_EXPLORER_ORIGIN explicitly.`);
+    }
 
     const recordCount = filteredRecords.length;
 
@@ -288,6 +300,10 @@ export function createOperationDiagnosticReport(records = [], options = {}) {
         recordCount,
         origin: activeOrigin,
         recordsByOrigin,
+        originConfiguration: {
+            fallbackRecords: activeFallbackOriginRecords,
+            retainedFallbackRecords: fallbackOriginRecords
+        },
         window: windowMeta,
         duration: {
             totalMs: totalDurationMs,

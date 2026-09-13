@@ -35,6 +35,7 @@ import {
 } from "../extensions/skill-explorer/lib/operation-response.mjs";
 import {
     resolveRecordOrigin,
+    resolveRecordOriginMetadata,
     recordOperationState,
     loadOperationState,
     DEFAULT_ORIGIN
@@ -61,29 +62,48 @@ function assertContract(response, operation) {
     assert.equal(typeof response.diagnosticCounts.omittedSourceErrors, "number");
 }
 
-test("static test: all registered tools in extension.mjs use createOperationResponse or operationFailure", async () => {
+const APPROVED_RESPONSE_FACTORIES = ["createOperationResponse", "operationFailure"];
+
+function assertHandlerReturnsOperationResponse(toolSource, operation) {
+    const returnStatements = [...toolSource.matchAll(/return\s+JSON\.stringify\(\s*/g)];
+    assert.ok(returnStatements.length > 0, `Public operation '${operation}' has no JSON response return.`);
+    for (const statement of returnStatements) {
+        const payload = toolSource.slice(statement.index + statement[0].length);
+        const factory = /^([A-Za-z_$][\w$]*)\s*\(/.exec(payload);
+        assert.ok(
+            factory,
+            `Public operation '${operation}' returns an ad hoc JSON payload instead of ${APPROVED_RESPONSE_FACTORIES.join(" or ")}.`
+        );
+        assert.ok(
+            APPROVED_RESPONSE_FACTORIES.includes(factory[1]),
+            `Public operation '${operation}' returns '${factory[1]}' instead of ${APPROVED_RESPONSE_FACTORIES.join(" or ")}.`
+        );
+    }
+}
+
+test("static contract: every registered public handler returns an operation response", async () => {
     const extensionSource = await fs.readFile(
         path.join(process.cwd(), "extensions", "skill-explorer", "extension.mjs"),
         "utf8"
     );
 
-    // Verify all tool names match supported operations
-    const toolNameMatches = [...extensionSource.matchAll(/name:\s*"skill_explorer_([a-z_]+)"/g)].map(m => m[1]);
-    for (const tool of toolNameMatches) {
-        assert.ok(
-            SUPPORTED_OPERATIONS.includes(tool),
-            `Tool 'skill_explorer_${tool}' is not listed in SUPPORTED_OPERATIONS`
-        );
-    }
+    const toolMatches = [...extensionSource.matchAll(/name:\s*"skill_explorer_([a-z_]+)"/g)];
+    const registeredOperations = toolMatches.map(match => match[1]);
+    assert.deepEqual(
+        [...registeredOperations].sort(),
+        [...SUPPORTED_OPERATIONS].sort(),
+        "Every registered public tool must be listed in SUPPORTED_OPERATIONS, and every supported operation must be registered."
+    );
+    assert.equal(new Set(registeredOperations).size, registeredOperations.length, "Public tool names must be unique.");
 
-    // Verify all return statements in handler functions return JSON.stringify(createOperationResponse(...)) or JSON.stringify(operationFailure(...))
-    const returnStatements = [...extensionSource.matchAll(/return\s+JSON\.stringify\(([^;]+)\)/g)].map(m => m[1]);
-    assert.ok(returnStatements.length >= 8, "Expected at least 8 handler return pathways in extension.mjs");
-    for (const stmt of returnStatements) {
-        assert.ok(
-            stmt.includes("createOperationResponse") || stmt.includes("operationFailure"),
-            `Handler return statement does not use createOperationResponse or operationFailure: ${stmt}`
-        );
+    for (let index = 0; index < toolMatches.length; index++) {
+        const operation = registeredOperations[index];
+        const start = toolMatches[index].index;
+        const end = toolMatches[index + 1]?.index ?? extensionSource.length;
+        const toolSource = extensionSource.slice(start, end);
+        assert.match(toolSource, /handler:\s*async\s*\(/, `Public operation '${operation}' must have an async handler.`);
+
+        assertHandlerReturnsOperationResponse(toolSource, operation);
     }
 });
 
@@ -250,6 +270,12 @@ test("resolveRecordOrigin supports explicit option, environment variables, NODE_
 
         // 1. Safe default
         assert.equal(resolveRecordOrigin(), "production");
+        assert.deepEqual(resolveRecordOriginMetadata(), {
+            origin: "production",
+            source: "default",
+            usedFallback: true,
+            warning: "Telemetry origin was not configured; defaulting to production. Set SKILL_EXPLORER_ORIGIN explicitly."
+        });
 
         // 2. Explicit argument
         assert.equal(resolveRecordOrigin("development"), "development");
@@ -300,7 +326,33 @@ test("recordOperationState embeds origin and environment markers in JSONL record
         assert.equal(records[1].environment, "test");
         assert.equal(records[2].origin, "development");
         assert.equal(records[2].environment, "development");
+        assert.equal(records[0].originResolution.source, "explicit");
+        assert.equal(records[1].originResolution.usedFallback, false);
     } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test("recordOperationState preserves safe fallback metadata and warning when origin is unconfigured", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "state-origin-fallback-"));
+    const statePath = path.join(tempDir, "operation-state.jsonl");
+    const originalEnv = { ...process.env };
+
+    try {
+        delete process.env.SKILL_EXPLORER_ORIGIN;
+        delete process.env.SKILL_EXPLORER_ENV;
+        delete process.env.COPILOT_ENVIRONMENT;
+        delete process.env.NODE_ENV;
+
+        const receipt = await recordOperationState("search", {}, statePath);
+        const [record] = await loadOperationState(statePath);
+        assert.equal(record.origin, "production");
+        assert.deepEqual(record.originResolution, resolveRecordOriginMetadata());
+        assert.equal(record.originResolution.usedFallback, true);
+        assert.match(record.observabilityWarning, /defaulting to production/i);
+        assert.match(receipt.observabilityWarning, /defaulting to production/i);
+    } finally {
+        process.env = originalEnv;
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 });
@@ -324,6 +376,7 @@ test("filterRecordsByOrigin filters records and calculates breakdown by origin",
         test: 1,
         other: 0
     });
+    assert.equal(all.fallbackOriginRecords, 1);
 
     // Production only
     const prod = filterRecordsByOrigin(records, "production");
@@ -373,6 +426,17 @@ test("diagnostic report supports origin and window filtering simultaneously", ()
     assert.equal(report24hTest.recordCount, 2);
     assert.equal(report24hTest.budget.exhaustedOperations, 0);
     assert.equal(report24hTest.healthy, true);
+});
+
+test("diagnostics report warns about fallback origin records without mixing explicit origins", () => {
+    const report = createOperationDiagnosticReport([
+        { operation: "legacy" },
+        { operation: "test", origin: "test", originResolution: { usedFallback: false } }
+    ], { origin: "production" });
+
+    assert.equal(report.recordCount, 1);
+    assert.equal(report.originConfiguration.fallbackRecords, 1);
+    assert.ok(report.warnings.some(warning => warning.includes("Origin configuration warning")));
 });
 
 test("parseDiagnosticWindow supports standard durations, shorthand aliases, and custom windows", () => {
@@ -425,10 +489,10 @@ test("diagnostic report computes alert rates and threshold warnings scoped to ac
     const baseTime = new Date("2026-09-13T16:00:00.000Z");
     const records = [
         // Within 1h: 1 healthy search, 1 healthy vet
-        { operation: "search", recordedAt: "2026-09-13T15:40:00.000Z", durationMs: 10, attemptedSources: ["catalog"], sourceErrors: [] },
-        { operation: "vet", recordedAt: "2026-09-13T15:50:00.000Z", durationMs: 20, attemptedSources: ["catalog"], sourceErrors: [] },
+        { operation: "search", origin: "test", recordedAt: "2026-09-13T15:40:00.000Z", durationMs: 10, attemptedSources: ["catalog"], sourceErrors: [] },
+        { operation: "vet", origin: "test", recordedAt: "2026-09-13T15:50:00.000Z", durationMs: 20, attemptedSources: ["catalog"], sourceErrors: [] },
         // 5 hours ago (outside 1h, inside 24h): budget exhaustion and failures
-        { operation: "sync", recordedAt: "2026-09-13T11:00:00.000Z", durationMs: 50, budgetExhausted: true, attemptedSources: ["failing-source"], sourceErrors: [{ source: "failing-source", error: "503" }] }
+        { operation: "sync", origin: "test", recordedAt: "2026-09-13T11:00:00.000Z", durationMs: 50, budgetExhausted: true, attemptedSources: ["failing-source"], sourceErrors: [{ source: "failing-source", error: "503" }] }
     ];
 
     // Report for 1h window should be healthy
@@ -524,4 +588,67 @@ test("diagnostics CLI script supports --window, --hour, --day, --all, --all-wind
     assert.ok(parsedMatrix["1h"]);
     assert.ok(parsedMatrix["24h"]);
     assert.ok(parsedMatrix["all"]);
+});
+
+test("static contract check rejects ad hoc JSON.stringify returns", () => {
+    const assertHandlerSource = (toolSource) => assertHandlerReturnsOperationResponse(toolSource, "example");
+
+    assert.throws(
+        () => assertHandlerSource('return JSON.stringify(createOperationResponse({ operation: "vet" }));\nreturn JSON.stringify({ error: message });'),
+        /ad hoc JSON payload/,
+        "An object-literal return must fail even when a valid factory return exists in the same handler."
+    );
+
+    assert.throws(
+        () => assertHandlerSource('return JSON.stringify(operationFailure("vet", err));\nreturn JSON.stringify(response);'),
+        /ad hoc JSON payload/,
+        "A bare identifier return must fail even when a valid factory return exists in the same handler."
+    );
+
+    assert.throws(
+        () => assertHandlerSource("return JSON.stringify(buildLegacyPayload(result));"),
+        /returns 'buildLegacyPayload'/
+    );
+
+    assert.throws(
+        () => assertHandlerSource("const value = 1;"),
+        /no JSON response return/
+    );
+
+    assert.doesNotThrow(
+        () => assertHandlerSource('return JSON.stringify(createOperationResponse({ operation: "vet" }));\nreturn JSON.stringify(operationFailure("vet", err));')
+    );
+});
+
+test("vet handler forwards the observability warning and vetting receipt to the response envelope", async () => {
+    const extensionSource = await fs.readFile(
+        path.join(process.cwd(), "extensions", "skill-explorer", "extension.mjs"),
+        "utf8"
+    );
+    const start = extensionSource.indexOf('name: "skill_explorer_vet"');
+    assert.ok(start > -1, "vet tool must be registered");
+    const end = extensionSource.indexOf('name: "skill_explorer_install"', start);
+    const vetSource = extensionSource.slice(start, end === -1 ? extensionSource.length : end);
+
+    assert.match(
+        vetSource,
+        /vetted\.observabilityWarning/,
+        "The vet handler must forward vetted.observabilityWarning so origin-classification issues reach callers."
+    );
+    assert.match(
+        vetSource,
+        /vettingReceipt:\s*vetted\.receipt/,
+        "The vet handler must forward the vetting receipt recorded with the operation state."
+    );
+
+    const warning = "Operation origin defaulted to production because no origin environment is configured.";
+    const response = createOperationResponse({
+        operation: "vet",
+        result: { riskScore: 0, observabilityWarning: warning },
+        attemptedSources: ["owner/repo"]
+    });
+    assert.ok(
+        response.warnings.includes(warning),
+        "createOperationResponse must surface a forwarded observabilityWarning in warnings."
+    );
 });

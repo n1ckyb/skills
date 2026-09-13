@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0] - 2026-09-13
 
+### Security
+- Inverted static-vetting polarity so every line of every file is scanned by default, including unfenced documentation prose. Suppression is now the narrow exception: a finding is dropped only when a negation directly governs that specific match within its own clause, and clause boundaries (sentence end, comma, contrastive conjunction, list/table delimiter) end that protection. This closes an evasion where an unrelated negation word anywhere on the line (for example `never`, `without`, or `detects`) zeroed the risk score and allowed a payload such as a piped remote install to install cleanly.
+- Removed phrasing-based directive detection, which only recognized an allowlist of instruction verbs and missed most realistic attacker phrasings.
+- Suppressed matches no longer mask a live payload later in the same line; all matches of a rule are evaluated.
+- Exempted bare `node:` module specifiers, which name a module rather than perform an operation; call sites are still flagged.
+- Hardened the static response-contract check so ad hoc `JSON.stringify` returns (object literals and bare identifiers) can no longer be masked by a valid factory return elsewhere in the same handler.
+
+### Fixed
+- `skill_explorer_vet` now forwards the origin-classification `observabilityWarning` and the vetting receipt into its response envelope instead of silently dropping them.
+
 ### Added
 - Standardized `createOperationResponse` contract and validation across all public operations (`search`, `trending`, `vet`, `install`, `sync`, `configure`).
 - Static analysis and contract test suite enforcing shared response envelope and preventing ad hoc responses.

@@ -133,6 +133,8 @@ Operation state entries persist explicit `origin` and `environment` markers (`pr
 4. **Node Environment**: `NODE_ENV` heuristic (`test` -> `test`, `dev`/`development` -> `development`, other -> `production`).
 5. **Safe Default**: `"production"`.
 
+Development tooling, CI, and test harnesses should set `SKILL_EXPLORER_ORIGIN` explicitly. The compatibility fallback remains available for legacy callers, but records `originResolution` metadata and an `observabilityWarning`; diagnostics report fallback-classified records.
+
 ---
 
 ## Local Diagnostics, Window & Origin Filtering
@@ -282,6 +284,6 @@ $$\text{Overall Score} = (\text{Utility} \times 0.30) + (\text{Clarity} \times 0
 4. **Collision Protection**: Atomic staging prevents directory corruption. Rejects installation if target exists with a differing digest.
 
 ### Static Analysis Limitations & False Positives
-- **Static Pattern Heuristics**: Static regex scanning inspects file contents without runtime execution. Benign documentation mentioning dangerous APIs (e.g. `child_process` in reference docs) may trigger detection.
+- **Static Pattern Heuristics**: Code-execution, network, credential, obfuscation, and destructive-operation rules scan **every line of every file**, including unfenced documentation prose, because a skill document is itself an instruction executed by the agent. A finding is suppressed only when a negation directly governs that specific match within its own clause (for example, a sentence prohibiting an API). A clause boundary — sentence end, comma, contrastive conjunction, or list/table delimiter — ends that protection, so an unrelated negation elsewhere on the line cannot neutralize a payload. Bare `node:` module specifiers are exempt because they name a module rather than perform an operation; call sites are still flagged. Prompt-injection rules are never suppressed.
 - **No Runtime Guarantee**: Static analysis cannot detect obfuscated dynamic network calls or post-install environmental tampering.
 - **No Claim of Absolute Safety**: Skills are reported as `no suspicious static patterns detected`, never as "proven safe".
