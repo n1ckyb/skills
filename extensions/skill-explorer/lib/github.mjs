@@ -72,6 +72,7 @@ export function fetchText(url) {
 }
 
 export async function resolveCommitSha(owner, repo, ref = "main") {
+    if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
     try {
         const data = await fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`);
         if (data.sha && /^[a-f0-9]{40}$/i.test(data.sha)) {
@@ -89,7 +90,8 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
         // Fall back to Git transport when the GitHub API is rate-limited.
     }
     const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, `refs/heads/${ref}`, `refs/tags/${ref}`], {
+    const refs = ref === "HEAD" ? ["HEAD"] : [`refs/heads/${ref}`, `refs/tags/${ref}`];
+    const { stdout } = await execFileAsync("git", ["ls-remote", validated.cloneUrl, ...refs], {
         timeout: 40000,
         shell: false,
         windowsHide: true
@@ -105,24 +107,35 @@ export async function resolveCommitSha(owner, repo, ref = "main") {
 
 export async function cloneRepoSecurely(cloneUrl, targetDir, ref = null) {
     const validated = parseAndValidateGitHubUrl(cloneUrl);
-    const args = ["clone", "--depth", "1", "--single-branch"];
-    if (ref) {
-        args.push("--branch", ref);
+    if (!ref || !/^[a-f0-9]{40}$/i.test(ref)) {
+        throw new Error("A resolved 40-character commit SHA is required before Git transport can fetch repository content.");
     }
-    args.push(validated.cloneUrl, targetDir);
-
-    await execFileAsync("git", args, {
+    const commitSha = ref.toLowerCase();
+    const gitOptions = ["-c", "protocol.version=2", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true"];
+    const commandOptions = {
         timeout: 40000,
         shell: false,
         windowsHide: true
-    });
+    };
+
+    await execFileAsync("git", [...gitOptions, "init", "--quiet", targetDir], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "remote", "add", "origin", validated.cloneUrl], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "fetch", "--depth=1", "--no-tags", "origin", commitSha], commandOptions);
+    await execFileAsync("git", [...gitOptions, "-C", targetDir, "checkout", "--detach", "--quiet", "FETCH_HEAD"], commandOptions);
+
+    const { stdout } = await execFileAsync("git", ["-C", targetDir, "rev-parse", "HEAD"], commandOptions);
+    if (stdout.trim().toLowerCase() !== commitSha) {
+        throw new Error(`Pinned Git checkout mismatch: expected '${commitSha}', got '${stdout.trim().toLowerCase()}'.`);
+    }
+    return commitSha;
 }
 
 export async function cloneAndReadRepo(repoUrl, targetRevision = null) {
     const validated = parseAndValidateGitHubUrl(repoUrl);
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-vet-"));
     try {
-        await cloneRepoSecurely(validated.cloneUrl, tempDir, targetRevision);
+        const commitSha = targetRevision || await resolveCommitSha(validated.owner, validated.repo, "HEAD");
+        await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
 
         // Extract exact HEAD commit SHA
         const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
@@ -408,19 +421,7 @@ export async function readGitHubSkillFolder({ owner, repo, ref, folder }, target
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-folder-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir);
-            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
-            await execFileAsync("git", ["checkout", "--detach", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
             const normalizedFolder = folder.replace(/^\/+|\/+$/g, "");
             const folderDir = path.join(tempDir, ...normalizedFolder.split("/"));
             const filesMap = {};
@@ -510,19 +511,7 @@ export async function readRegistrySkill({ owner, repo, slug }, targetRevision = 
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "skill-registry-vet-"));
         try {
             const validated = parseAndValidateGitHubUrl(`${owner}/${repo}`);
-            await cloneRepoSecurely(validated.cloneUrl, tempDir);
-            await execFileAsync("git", ["fetch", "--depth", "1", "origin", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
-            await execFileAsync("git", ["checkout", "--detach", commitSha], {
-                cwd: tempDir,
-                timeout: 40000,
-                shell: false,
-                windowsHide: true
-            });
+            await cloneRepoSecurely(validated.cloneUrl, tempDir, commitSha);
             const matches = [];
             async function findSkillFiles(dir, relative = "") {
                 const entries = await fs.readdir(dir, { withFileTypes: true });

@@ -70,12 +70,10 @@ export async function loadInstalledRegistry(registryPath = INSTALLED_REGISTRY_PA
 
 export async function saveInstalledRecord(record, registryPath = INSTALLED_REGISTRY_PATH) {
     const registry = await loadInstalledRegistry(registryPath);
-    registry[record.source] = {
-        name: record.name,
-        source: record.source,
+    const key = `${record.scope}:${record.source}`;
+    registry[key] = {
         sourceRevision: record.sourceRevision,
         contentDigest: record.contentDigest,
-        scope: record.scope,
         targetDirectory: record.targetDirectory,
         updatedAt: new Date().toISOString()
     };

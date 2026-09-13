@@ -8,6 +8,7 @@ import {
     getCanonicalSkillSlug,
     validatePathSafety
 } from "../extensions/skill-explorer/lib/url.mjs";
+import { cloneRepoSecurely } from "../extensions/skill-explorer/lib/github.mjs";
 
 test("parseAndValidateGitHubUrl accepts valid owner/repo and https URLs", () => {
     const r1 = parseAndValidateGitHubUrl("github/awesome-copilot");
@@ -80,4 +81,11 @@ test("validatePathSafety enforces relative path constraints", () => {
     assert.equal(validatePathSafety("C:\\Windows"), false);
     assert.equal(validatePathSafety(".git/config"), false);
     assert.equal(validatePathSafety(".gitmodules"), false);
+});
+
+test("cloneRepoSecurely rejects unpinned Git transport", async () => {
+    await assert.rejects(
+        cloneRepoSecurely("owner/repo", "unused-target", "main"),
+        /40-character commit SHA/i
+    );
 });

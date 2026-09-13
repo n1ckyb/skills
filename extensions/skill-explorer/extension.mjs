@@ -20,16 +20,15 @@ import {
     fetchJson,
     readSkillSource
 } from "./lib/github.mjs";
-import { vetFilesMap } from "./lib/vetting.mjs";
 import { reviewSkill, toSkillCard } from "./lib/review.mjs";
-import { installSkillAtomic } from "./lib/installer.mjs";
+import { executeInstallation, vetSkillSource } from "./lib/installation-flow.mjs";
 
 async function filterSynchronizedResults(results) {
     const registry = await loadInstalledRegistry();
     const visible = [];
     for (const result of results) {
         const source = result.fullName || result.sourceRepository || result.url;
-        const installed = registry[source];
+        const installed = registry[`user:${source}`] || registry[`project:${source}`] || registry[source];
         if (!installed) {
             visible.push(result);
             continue;
@@ -294,8 +293,9 @@ session = await joinSession({
 
                 let source;
                 try {
-                    source = await readSkillSource(args.repoOrUrl);
-                    const vetResult = vetFilesMap(source.filesMap, args.repoOrUrl, config);
+                    const vetted = await vetSkillSource(args.repoOrUrl, config);
+                    source = vetted.source;
+                    const vetResult = vetted.vetting;
                     const result = {
                         ...vetResult,
                         sourceRevision: source.sourceRevision,
@@ -348,10 +348,6 @@ session = await joinSession({
                         type: "string",
                         description: "The sha256 content digest string returned by skill_explorer_vet."
                     },
-                    replaceExisting: {
-                        type: "boolean",
-                        description: "Replace an existing different-content installation only after explicit synchronization approval."
-                    }
                 },
                 required: ["repoOrUrl", "scope", "userConfirmed", "confirmationSummary", "expectedRevision", "expectedDigest"]
             },
@@ -360,7 +356,8 @@ session = await joinSession({
                 await session.log(`Preparing installation for '${args.repoOrUrl}' in ${args.scope} scope...`);
 
                 try {
-                    const result = await installSkillAtomic({
+                    const result = await executeInstallation({
+                        action: "install",
                         repoOrUrl: args.repoOrUrl,
                         scope: args.scope,
                         userConfirmed: args.userConfirmed,
@@ -368,7 +365,7 @@ session = await joinSession({
                         expectedRevision: args.expectedRevision,
                         expectedDigest: args.expectedDigest,
                         config,
-                        allowReplace: args.replaceExisting === true
+                        replaceExisting: false
                     });
                     return JSON.stringify(result, null, 2);
                 } catch (err) {
@@ -412,12 +409,13 @@ session = await joinSession({
                 const results = [];
                 for (const skill of args.skills) {
                     try {
-                        results.push(await installSkillAtomic({
+                        results.push(await executeInstallation({
                             ...skill,
+                            action: "sync",
                             userConfirmed: true,
                             confirmationSummary: args.confirmationSummary,
                             config,
-                            allowReplace: args.replaceExisting === true
+                            replaceExisting: args.replaceExisting === true
                         }));
                     } catch (err) {
                         results.push({ repoOrUrl: skill.repoOrUrl, error: err.message });

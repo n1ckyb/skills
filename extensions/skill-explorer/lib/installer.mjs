@@ -40,7 +40,8 @@ export async function installSkillAtomic({
     config,
     targetDirOverride = null,
     sourceOverride = null,
-    allowReplace = false
+    allowReplace = false,
+    action = "install"
 }) {
     if (userConfirmed !== true || !confirmationSummary?.trim()) {
         return {
@@ -59,6 +60,12 @@ export async function installSkillAtomic({
 
     const cleanExpectedSha = expectedRevision.trim().toLowerCase();
     const cleanExpectedDigest = expectedDigest.trim().toLowerCase();
+    if (!["install", "sync"].includes(action)) {
+        throw new Error(`Unsupported installation action '${action}'.`);
+    }
+    if (action === "install" && allowReplace) {
+        throw new Error("Install never replaces existing different content. Use sync for an approved update.");
+    }
 
     let source = sourceOverride;
     if (!source) {
@@ -130,7 +137,8 @@ export async function installSkillAtomic({
                     sourceRevision: cleanExpectedSha,
                     contentDigest: actualDigest,
                     scope,
-                    targetDirectory: targetDir
+                    targetDirectory: targetDir,
+                    action
                 });
                 return {
                     status: "ALREADY_INSTALLED",
@@ -182,7 +190,8 @@ export async function installSkillAtomic({
                 sourceRevision: cleanExpectedSha,
                 contentDigest: actualDigest,
                 scope,
-                targetDirectory: targetDir
+                targetDirectory: targetDir,
+                action
             });
             return {
                 status: "INSTALLED_SUCCESSFULLY",

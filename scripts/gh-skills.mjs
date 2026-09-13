@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 import readline from "node:readline/promises";
 import process from "node:process";
-import { readSkillSource } from "../extensions/skill-explorer/lib/github.mjs";
-import { vetFilesMap } from "../extensions/skill-explorer/lib/vetting.mjs";
-import { installSkillAtomic } from "../extensions/skill-explorer/lib/installer.mjs";
+import { executeInstallation, vetSkillSource } from "../extensions/skill-explorer/lib/installation-flow.mjs";
 import { loadConfig } from "../extensions/skill-explorer/lib/config.mjs";
 
 function usage() {
@@ -24,8 +22,7 @@ if (command !== "install" || !repository || !skillName) {
         const sourceSpec = `${repository}/skills/${skillName}`;
         try {
             const config = await loadConfig();
-            const source = await readSkillSource(sourceSpec);
-            const vetResult = vetFilesMap(source.filesMap, sourceSpec, config);
+            const { source, vetting: vetResult } = await vetSkillSource(sourceSpec, config);
             const revision = source.sourceRevision;
             const digest = source.contentDigest;
 
@@ -48,7 +45,8 @@ if (command !== "install" || !repository || !skillName) {
                 console.log("Installation cancelled.");
                 process.exitCode = 1;
             } else {
-                const result = await installSkillAtomic({
+                const result = await executeInstallation({
+                    action: "install",
                     repoOrUrl: sourceSpec,
                     scope,
                     userConfirmed: true,
