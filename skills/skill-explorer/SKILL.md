@@ -52,9 +52,11 @@ These tools are provided by the companion `skill-explorer` extension. If the ext
 3. **Install**: `skill_explorer_install`
    - Vet and atomically install skills into global (`user`) scope (`~/.copilot/extensions/` or `~/.agents/skills/`) or `project` scope (`.github/extensions/` or `.github/skills/`).
    - Requires `expectedRevision` (40-char SHA) and `expectedDigest` (`sha256`) matching the vetting result. Re-resolves content at revision, checks byte equality, and automatically blocks installation if the risk score exceeds threshold (default: 50/100).
-4. **Configure**: `skill_explorer_configure`
+4. **Sync**: `skill_explorer_sync`
+   - Re-vet and synchronize explicitly selected tracked installations. Requires explicit approval and replaces different local content only when `replaceExisting` is true.
+5. **Configure**: `skill_explorer_configure`
    - View and update trusted organizations, whitelist repos, and risk threshold settings (`~/.copilot/skill-explorer-config.json`).
-5. **Trending**: `skill_explorer_trending`
+6. **Trending**: `skill_explorer_trending`
    - List skills ranked by `skills.sh` for `Trending (24h)`, `Hot`, or `All-time installs`.
    - Keep trend rank separate from source priority and security status.
 

@@ -44,6 +44,8 @@ When searching or listing trending skills, `skill-explorer` renders interactive 
 
 Results that were previously installed by Skill Explorer are compared with their recorded source revision and content digest. Unchanged skills are omitted from discovery; changed skills remain visible with an update status. Legacy installs without Skill Explorer metadata remain visible so they are not incorrectly treated as synchronized.
 
+Use `skill_explorer_sync` to update explicitly selected tracked installations. Synchronization re-vets each exact upstream folder and requires explicit approval before replacing different local content.
+
 ```
 +-----------------------------------------------------------------------+
 | [Card] steno-mode                                                     |

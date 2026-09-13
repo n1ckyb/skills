@@ -39,7 +39,8 @@ export async function installSkillAtomic({
     expectedDigest,
     config,
     targetDirOverride = null,
-    sourceOverride = null
+    sourceOverride = null,
+    allowReplace = false
 }) {
     if (userConfirmed !== true || !confirmationSummary?.trim()) {
         return {
@@ -119,7 +120,7 @@ export async function installSkillAtomic({
             if (e.code !== "ENOENT") throw e;
         }
 
-        if (targetExists) {
+        if (targetExists && !allowReplace) {
             const existingFiles = await scanDirectoryFiles(targetDir);
             const existingDigest = calculateContentDigest(existingFiles).toLowerCase();
             if (existingDigest === cleanExpectedDigest) {
@@ -149,6 +150,7 @@ export async function installSkillAtomic({
         const parentDir = path.dirname(targetDir);
         await fs.mkdir(parentDir, { recursive: true });
         const stagingDir = `${targetDir}.staging-${crypto.randomUUID()}`;
+        const backupDir = targetExists ? `${targetDir}.backup-${crypto.randomUUID()}` : null;
 
         try {
             await fs.mkdir(stagingDir, { recursive: true });
@@ -166,7 +168,14 @@ export async function installSkillAtomic({
                 throw new Error(`Staged content digest verification failed: expected '${cleanExpectedDigest}', got '${stagedDigest}'`);
             }
 
-            await fs.rename(stagingDir, targetDir);
+            if (targetExists) await fs.rename(targetDir, backupDir);
+            try {
+                await fs.rename(stagingDir, targetDir);
+            } catch (err) {
+                if (targetExists) await fs.rename(backupDir, targetDir).catch(() => {});
+                throw err;
+            }
+            if (backupDir) await fs.rm(backupDir, { recursive: true, force: true });
             await saveInstalledRecord({
                 name: skillName,
                 source: repoOrUrl,
@@ -193,6 +202,13 @@ export async function installSkillAtomic({
             };
         } catch (err) {
             await fs.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+            if (backupDir) {
+                try {
+                    await fs.stat(targetDir);
+                } catch (restoreErr) {
+                    if (restoreErr.code === "ENOENT") await fs.rename(backupDir, targetDir).catch(() => {});
+                }
+            }
             throw err;
         }
     } finally {
