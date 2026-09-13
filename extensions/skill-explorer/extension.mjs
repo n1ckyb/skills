@@ -1,6 +1,6 @@
 ﻿import { joinSession } from "@github/copilot-sdk/extension";
 import fs from "node:fs/promises";
-import { createSkillShortlistCanvas } from "./skill-shortlist-canvas.mjs";
+import { createSkillShortlistCanvas, publishAssessment } from "./skill-shortlist-canvas.mjs";
 import {
     loadConfig,
     saveConfig,
@@ -163,6 +163,7 @@ session = await joinSession({
                             shortlistCanvas: {
                                 canvasId: "skill-shortlist",
                                 input: {
+                                    query: q,
                                     candidates: results.map(result => ({
                                         name: result.name,
                                         source: result.fullName || result.sourceRepository || result.url,
@@ -264,7 +265,7 @@ session = await joinSession({
                 try {
                     source = await readSkillSource(args.repoOrUrl);
                     const vetResult = vetFilesMap(source.filesMap, args.repoOrUrl, config);
-                    return JSON.stringify({
+                    const result = {
                         ...vetResult,
                         sourceRevision: source.sourceRevision,
                         contentDigest: source.contentDigest,
@@ -273,7 +274,9 @@ session = await joinSession({
                         provenanceTrusted: source.provenance === "canonical",
                         securityVettingBypassed: false,
                         review: reviewSkill(source.filesMap, vetResult, source)
-                    }, null, 2);
+                    };
+                    publishAssessment(args.repoOrUrl, result);
+                    return JSON.stringify(result, null, 2);
                 } catch (err) {
                     return JSON.stringify({ error: `Vetting failed: ${err.message}` });
                 } finally {

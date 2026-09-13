@@ -39,7 +39,7 @@ function validateCandidates(input) {
 
 function renderHtml(candidates) {
     const cards = candidates.map((candidate, index) => `
-        <article class="card">
+        <article class="card" data-index="${index}">
           <div class="card-heading">
             <div class="identity">
               <input class="select-candidate" type="checkbox" data-index="${index}" aria-label="Select ${escapeHtml(candidate.name)}">
@@ -52,7 +52,7 @@ function renderHtml(candidates) {
           </div>
           <p class="description">${escapeHtml(candidate.description || "No description provided.")}</p>
           <div class="card-footer">
-            <span class="status"><span class="status-dot"></span>${escapeHtml(candidate.status)}</span>
+            <span class="status" data-status><span class="status-dot"></span>${escapeHtml(candidate.status)}</span>
             <div class="actions">
               ${candidate.url ? `<a class="button button-subtle" href="${escapeHtml(candidate.url)}" target="_blank" rel="noreferrer">View source code on GitHub</a>` : ""}
               <button class="button button-subtle" data-action="details" data-index="${index}">Details</button>
@@ -74,7 +74,7 @@ body { margin: 0; padding: 20px; background: var(--background-color-default, #ff
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .button { display: inline-block; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; color: inherit; cursor: pointer; padding: 5px 10px; font: inherit; font-size: 12px; text-decoration: none; } .button-subtle { background: var(--background-color-default, #fff); } .button-primary { background: var(--true-color-blue, #0969da); border-color: var(--true-color-blue, #0969da); color: var(--color-white, #fff); } .button:focus-visible { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 2px; }
 #status { color: var(--text-color-muted, #57606a); min-height: 20px; margin: 16px 0 0; } @media (max-width: 640px) { .card-heading, .card-footer { flex-direction: column; } .actions { justify-content: flex-start; } }
 </style></head>
-<body><header class="header"><h1>Skill shortlist</h1><p class="intro">Review candidates before asking for details, security vetting, or installation. Installation always requires explicit confirmation.</p><div class="toolbar"><span class="selection-count" id="selection-count">0 selected</span><div class="actions"><button class="button button-subtle" id="select-all" type="button">Select all</button><button class="button button-subtle" id="clear-selection" type="button">Clear</button><button class="button button-primary" id="install-selected" type="button" disabled>Install selected</button></div></div></header>${cards}<p id="status" role="status" aria-live="polite"></p>
+<body><header class="header"><h1>Skill shortlist</h1><p class="intro">Review candidates before asking for details, security vetting, or installation. Installation always requires explicit confirmation.</p><div class="toolbar"><span class="selection-count" id="selection-count">0 selected</span><div class="actions"><button class="button button-subtle" id="select-all" type="button">Select all</button><button class="button button-subtle" id="clear-selection" type="button">Clear</button><button class="button button-subtle" id="fetch-more" type="button">Fetch more skills</button><button class="button button-primary" id="install-selected" type="button" disabled>Install selected</button></div></div></header>${cards}<p id="status" role="status" aria-live="polite"></p>
 <script>
 const checkboxes = [...document.querySelectorAll(".select-candidate")];
 const selectionCount = document.getElementById("selection-count");
@@ -87,6 +87,7 @@ function updateSelection() {
 checkboxes.forEach(input => input.addEventListener("change", updateSelection));
 document.getElementById("select-all").addEventListener("click", () => { checkboxes.forEach(input => { input.checked = true; }); updateSelection(); });
 document.getElementById("clear-selection").addEventListener("click", () => { checkboxes.forEach(input => { input.checked = false; }); updateSelection(); });
+document.getElementById("fetch-more").addEventListener("click", () => sendBulkRequest("more", []));
 installSelected.addEventListener("click", () => sendBulkRequest("install", checkboxes.filter(input => input.checked).map(input => Number(input.dataset.index))));
 document.querySelectorAll("button[data-action]").forEach(button => button.addEventListener("click", async () => {
   button.disabled = true;
@@ -100,7 +101,30 @@ async function sendBulkRequest(action, indexes, button) {
     status.textContent = action === "install" && indexes.length > 1 ? "Install request sent for selected skills." : "Request sent to the agent.";
   } catch (error) { status.textContent = "Request failed: " + error.message; if (button) button.disabled = false; }
 }
+const events = new EventSource("/events");
+events.addEventListener("assessment", event => {
+  const update = JSON.parse(event.data);
+  const card = document.querySelector('.card[data-index="' + update.index + '"]');
+  if (!card) return;
+  const status = card.querySelector("[data-status]");
+  status.innerHTML = '<span class="status-dot"></span>' + update.status;
+  document.getElementById("status").textContent = "Assessment updated.";
+});
 updateSelection();</script></body></html>`;
+}
+
+export function publishAssessment(repoOrUrl, result) {
+    const status = result.isBlocked || result.status === "BLOCKED"
+        ? "Blocked"
+        : result.status === "SAFE" ? "Vetted: Safe" : "Vetted: Review";
+    for (const entry of servers.values()) {
+        const index = entry.candidates.findIndex(candidate =>
+            candidate.source === repoOrUrl || candidate.url === repoOrUrl || candidate.source.endsWith(`/${repoOrUrl}`));
+        if (index < 0) continue;
+        entry.candidates[index].status = status;
+        const payload = JSON.stringify({ index, status, riskScore: result.riskScore, findingsCount: result.findingsCount });
+        for (const client of entry.clients) client.write(`event: assessment\ndata: ${payload}\n\n`);
+    }
 }
 
 async function readJson(req) {
@@ -120,7 +144,8 @@ export function createSkillShortlistCanvas(session) {
         inputSchema: {
             type: "object",
             properties: {
-                candidates: { type: "array", minItems: 1, maxItems: 50 }
+                candidates: { type: "array", minItems: 1, maxItems: 50 },
+                query: { type: "string", maxLength: 200 }
             },
             required: ["candidates"]
         },
@@ -142,7 +167,7 @@ export function createSkillShortlistCanvas(session) {
             const candidates = validateCandidates(ctx.input);
             let entry = servers.get(ctx.instanceId);
             if (!entry) {
-                entry = await startServer(session, candidates);
+                entry = await startServer(session, candidates, ctx.input.query || "");
                 servers.set(ctx.instanceId, entry);
             }
             return { title: "Skill shortlist", status: "Review candidates", url: entry.url };
@@ -158,6 +183,10 @@ export function createSkillShortlistCanvas(session) {
 }
 
 async function requestAction(session, action, candidates) {
+    if (action === "more") {
+        await session.send({ prompt: `Fetch more skills related to '${candidates[0].query || "the current shortlist"}' using skill_explorer_search, then present the new results in the embedded shortlist. Do not install anything.` });
+        return { action, status: "request_sent" };
+    }
     const safeCandidates = validateCandidates({ candidates });
     const list = safeCandidates.map(candidate => `- '${candidate.name}' from '${candidate.source}'`).join("\n");
     const prompt = action === "details"
@@ -169,17 +198,29 @@ async function requestAction(session, action, candidates) {
     return { candidates: safeCandidates.map(candidate => candidate.name), action, status: "request_sent" };
 }
 
-async function startServer(session, candidates) {
+async function startServer(session, candidates, query) {
+    const clients = new Set();
     const server = createServer(async (req, res) => {
         if (req.method === "GET" && req.url === "/") {
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(renderHtml(candidates));
             return;
         }
+        if (req.method === "GET" && req.url === "/events") {
+            res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+            clients.add(res);
+            req.on("close", () => clients.delete(res));
+            return;
+        }
         if (req.method === "POST" && req.url === "/action") {
             try {
                 const body = await readJson(req);
                 const indexes = Array.isArray(body.indexes) ? body.indexes : [];
+                if (body.action === "more") {
+                    await requestAction(session, "more", [{ query }]);
+                    res.writeHead(204).end();
+                    return;
+                }
                 if (!["details", "vet", "install"].includes(body.action) || indexes.length === 0 || indexes.length > 50 || indexes.some(index => !Number.isInteger(index) || !candidates[index])) {
                     throw new Error("Invalid shortlist action.");
                 }
@@ -194,5 +235,5 @@ async function startServer(session, candidates) {
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     const port = server.address().port;
-    return { server, url: `http://127.0.0.1:${port}/` };
+    return { server, url: `http://127.0.0.1:${port}/`, candidates, clients };
 }
