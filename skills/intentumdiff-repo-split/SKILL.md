@@ -1,5 +1,5 @@
 ---
-name: intentdiff-repo-split
+name: intentumdiff-repo-split
 description: >-
   Rules and mechanics for splitting the IntentDiff monorepo into the 76 polyglot repos under
   buchochelliq-labs (intentdiff-core, -plugin-sdk, -registry, -python, -go, -java, -vscode, and
