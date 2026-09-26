@@ -1,5 +1,5 @@
 ---
-name: intentdiff-architecture-audit
+name: intentumdiff-architecture-audit
 description: >-
   Systematically reason over the IntentDiff codebase and find its real problems — invariant
   violations, architectural drift, latent bugs, and tech debt — then produce a ranked,
